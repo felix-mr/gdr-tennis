@@ -1,3 +1,5 @@
+import { validateGuests } from './guests.js';
+
 export function koreaToday() {
   const parts = new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Seoul', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date());
   return ['year', 'month', 'day'].map(type => parts.find(p => p.type === type).value).join('-');
@@ -21,7 +23,7 @@ export function quarter(date) { return `${date.slice(0, 4)}-Q${Math.ceil(Number(
 export function recordsFrom(state) {
   return Object.values(state.sessions).flatMap(session => Object.entries(session.matchMap).flatMap(([id, match]) => {
     const result = state.results[`${session.date}_${id}`];
-    return validResult(result) ? [{ ...match, ...result, date: session.date, fixedPlayerIds: session.fixedPlayerIds }] : [];
+    return validResult(result) ? [{ ...match, ...result, date: session.date, fixedPlayerIds: session.fixedPlayerIds, guests: session.guests || {} }] : [];
   }));
 }
 export function ranking(records, players) {
@@ -48,7 +50,10 @@ export function ranking(records, players) {
   });
 }
 export function validateSession(s, knownIds) {
-  if (!s || !validDate(s.date) || !Array.isArray(s.participantIds) || s.participantIds.length < 4 || new Set(s.participantIds).size !== s.participantIds.length || s.participantIds.some(id => !knownIds.includes(id)) || !Array.isArray(s.fixedPlayerIds) || s.fixedPlayerIds.some(id => !s.participantIds.includes(id)) || !s.matchMap || !Object.keys(s.matchMap).length || !/^\d{2}:\d{2}$/.test(s.startTime) || !Number.isInteger(s.roundMinutes) || s.roundMinutes < 10 || s.roundMinutes > 120) throw new Error('대진표 형식이 올바르지 않습니다.');
+  const guests = validateGuests(s?.guests || {});
+  const guestIds = Object.keys(guests), allowedIds = [...knownIds, ...guestIds];
+  if (!s || !validDate(s.date) || !Array.isArray(s.participantIds) || s.participantIds.length < 4 || new Set(s.participantIds).size !== s.participantIds.length || s.participantIds.some(id => !allowedIds.includes(id)) || guestIds.some(id => knownIds.includes(id) || !s.participantIds.includes(id)) || !Array.isArray(s.fixedPlayerIds) || new Set(s.fixedPlayerIds).size !== s.fixedPlayerIds.length || s.fixedPlayerIds.some(id => !s.participantIds.includes(id) || guestIds.includes(id)) || !s.matchMap || !Object.keys(s.matchMap).length || !/^\d{2}:\d{2}$/.test(s.startTime) || !Number.isInteger(s.roundMinutes) || s.roundMinutes < 10 || s.roundMinutes > 120) throw new Error('대진표 형식이 올바르지 않습니다.');
+  if (guestIds.length && s.fixedPlayerIds.length !== s.participantIds.length - guestIds.length) throw new Error('회원과 게스트 명단을 확인해 주세요.');
   const availableRounds = s.endTime ? meetingWindow(s.startTime, s.endTime) : MAX_ROUNDS;
   if (s.endTime && s.roundMinutes !== 30) throw new Error('경기 시간은 30분 고정입니다.');
   const active = {}, counts = Object.fromEntries(s.participantIds.map(id => [id, 0]));

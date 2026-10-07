@@ -5,17 +5,35 @@ service cloud.firestore {
       let parts = time.split(':');
       return int(parts[0]) * 60 + int(parts[1]);
     }
+    function validGuest(guests, id) {
+      return !(id in guests) || (guests[id] is map
+        && guests[id].keys().hasAll(['name']) && guests[id].keys().hasOnly(['name'])
+        && guests[id].name is string && guests[id].name.size() >= 1 && guests[id].name.size() <= 12
+        && guests[id].name.matches('^[^ ].*[^ ]$|^[^ ]$'));
+    }
+    function validGuests(guests) {
+      return guests is map
+        && guests.keys().hasOnly(['guest001', 'guest002', 'guest003', 'guest004', 'guest005', 'guest006', 'guest007', 'guest008'])
+        && validGuest(guests, 'guest001') && validGuest(guests, 'guest002')
+        && validGuest(guests, 'guest003') && validGuest(guests, 'guest004')
+        && validGuest(guests, 'guest005') && validGuest(guests, 'guest006')
+        && validGuest(guests, 'guest007') && validGuest(guests, 'guest008');
+    }
     function validHeader(date) {
       let d = request.resource.data;
       let window = (minutes(d.endTime) - minutes(d.startTime)) / 30;
+      let guests = d.get('guests', {});
       return d.keys().hasAll(['schemaVersion', 'date', 'participantIds', 'fixedPlayerIds', 'startTime', 'endTime', 'roundMinutes', 'partnerRepeats', 'lockedPairs', 'roundCount', 'matchCount', 'createdAt'])
-        && d.keys().hasOnly(['schemaVersion', 'date', 'participantIds', 'fixedPlayerIds', 'startTime', 'endTime', 'roundMinutes', 'partnerRepeats', 'lockedPairs', 'roundCount', 'matchCount', 'createdAt'])
+        && d.keys().hasOnly(['schemaVersion', 'date', 'participantIds', 'fixedPlayerIds', 'guests', 'startTime', 'endTime', 'roundMinutes', 'partnerRepeats', 'lockedPairs', 'roundCount', 'matchCount', 'createdAt'])
         && d.schemaVersion == 2 && d.date == date
         && date.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
-        && d.participantIds is list && d.participantIds.size() >= 4 && d.participantIds.size() <= 14
+        && d.participantIds is list && d.participantIds.size() >= 4 && d.participantIds.size() <= 22
         && d.participantIds.toSet().size() == d.participantIds.size()
-        && d.participantIds.hasOnly(['gdr001', 'gdr002', 'gdr003', 'gdr004', 'gdr005', 'gdr006', 'gdr007', 'gdr008', 'gdr009', 'gdr010', 'gdr011', 'gdr012', 'gdr013', 'gdr014'])
-        && d.fixedPlayerIds == d.participantIds
+        && d.fixedPlayerIds is list && d.fixedPlayerIds.toSet().size() == d.fixedPlayerIds.size()
+        && d.fixedPlayerIds.hasOnly(['gdr001', 'gdr002', 'gdr003', 'gdr004', 'gdr005', 'gdr006', 'gdr007', 'gdr008', 'gdr009', 'gdr010', 'gdr011', 'gdr012', 'gdr013', 'gdr014'])
+        && validGuests(guests) && guests.keys().hasOnly(d.participantIds)
+        && d.participantIds.hasOnly(d.fixedPlayerIds.concat(guests.keys()))
+        && d.participantIds.size() == d.fixedPlayerIds.size() + guests.size()
         && d.startTime.matches('^([01][0-9]|2[0-3]):(00|30)$')
         && d.endTime.matches('^([01][0-9]|2[0-3]):(00|30)$')
         && window >= 1 && window <= 47 && d.roundMinutes == 30

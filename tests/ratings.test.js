@@ -5,7 +5,8 @@ import { generateSchedule, allocateForWindow } from '../src/scheduler.js';
 import { validateSession } from '../src/model.js';
 import baseline from '../data/strength-baseline.json' with { type: 'json' };
 import players from '../data/players.json' with { type: 'json' };
-const ids = players.map(p => p.id), date = '2026-11-01';
+import periods from '../data/periods.json' with { type: 'json' };
+const ids = periods.find(period => period.id === '2026-Q4').memberIds, date = '2026-11-01';
 const record = (teamA, teamB, outcome = 'teamA', overrides = {}) => ({ date: '2026-10-11', teamA, teamB, scoreA: outcome === 'teamB' ? 4 : 6, scoreB: outcome === 'teamA' ? 4 : 6, outcome, fixedPlayerIds: [...teamA, ...teamB], ...overrides });
 
 test('all 14 supplied members follow seven equal-value groups; no data keeps initial values', () => {
@@ -19,6 +20,12 @@ test('all 14 supplied members follow seven equal-value groups; no data keeps ini
   assert.deepEqual(strengthsForSession([], ids, baseline, date), values);
   const reversed = initialStrengths(ids, { ...baseline, groups: [...baseline.groups].reverse() });
   assert.ok(reversed.gdr011 > reversed.gdr001);
+});
+
+test('adding club members preserves Q4 priors and keeps unconfigured members neutral', () => {
+  const values = initialStrengths(players.map(player => player.id), baseline);
+  const existing = initialStrengths(ids, baseline);
+  for (const player of players) assert.equal(values[player.id], existing[player.id] ?? 0.5);
 });
 
 test('one unexpected result stays close to prior; sustained outcomes can change original order', () => {

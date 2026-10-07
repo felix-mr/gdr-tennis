@@ -6,14 +6,14 @@ import { collection, doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, writeBa
 import { encodeSession, encodeRounds, decodeSession } from '../src/session-codec.js';
 import { validateSession } from '../src/model.js';
 import { generateSchedule, allocateForWindow } from '../src/scheduler.js';
-import players from '../data/players.json' with { type: 'json' };
+import periods from '../data/periods.json' with { type: 'json' };
 
 test('Firestore public entry contract', { skip: !process.env.FIRESTORE_EMULATOR_HOST }, async t => {
   const [host, port] = process.env.FIRESTORE_EMULATOR_HOST.split(':');
   const env = await initializeTestEnvironment({ projectId: 'demo-gdr', firestore: { host, port: Number(port), rules: await readFile(new URL('../firebase/firestore.rules', import.meta.url), 'utf8') } });
   try {
     const db = env.unauthenticatedContext().firestore(), base = 'clubs/gdr';
-    const ids = players.map(p => p.id), lockedPairs = [[ids[0], ids[1]]];
+    const ids = periods.find(period => period.id === '2026-Q4').memberIds, lockedPairs = [[ids[0], ids[1]]];
     const generated = generateSchedule(ids, allocateForWindow(ids, 4, lockedPairs), { attempts: 40, lockedPairs });
     const session = { schemaVersion: 1, date: '2026-10-07', participantIds: ids, fixedPlayerIds: ids, matchMap: generated.matchMap, partnerRepeats: generated.partnerRepeats, lockedPairs, startTime: '19:00', endTime: '21:00', roundMinutes: 30, createdAt: serverTimestamp() };
     const scheduleRef = doc(db, base + '/sessions/' + session.date);
@@ -72,6 +72,23 @@ test('Firestore public entry contract', { skip: !process.env.FIRESTORE_EMULATOR_
       await assertFails(setDoc(doc(db, base + '/sessions/' + session.date + '/rounds/5'), { round: 5, matchMap: { 'r5-c1': { ...session.matchMap['r1-c1'], round: 5 } } }));
     });
     const resultRef = doc(db, base + '/matchResults/2026-10-07_r1-c1');
+    await t.test('guest identity is stored with a meeting, excluded from fixed members and strictly validated', async () => {
+      const participants = [...ids.slice(0, 3), 'guest001'];
+      const generated = generateSchedule(participants, allocateForWindow(participants, 2), { attempts: 10 });
+      const guestSession = { ...session, date: '2026-12-06', participantIds: participants, fixedPlayerIds: ids.slice(0, 3), guests: { guest001: { name: '홍길동' } }, lockedPairs: [], endTime: '20:00', matchMap: generated.matchMap, partnerRepeats: generated.partnerRepeats };
+      await assertSucceeds(save(guestSession));
+      const restored = await load(guestSession.date);
+      assert.deepEqual(restored.guests, guestSession.guests);
+      validateSession(restored, ids);
+      await assertSucceeds(setDoc(doc(db, base + '/matchResults/2026-12-06_r1-c1'), { date: '2026-12-06', matchId: 'r1-c1', scoreA: 6, scoreB: 4, outcome: 'teamA', revision: 1, updatedAt: serverTimestamp() }));
+      const badDate = '2026-12-13';
+      for (const guests of [{}, { guest001: { name: '' } }, { guest001: { name: ' ' } }, { guest001: { name: '가'.repeat(13) } }, { guest001: { name: '홍길동', rating: 1 } }, { gdr001: { name: '김민종' } }, { guest009: { name: '홍길동' } }]) await assertFails(save({ ...guestSession, date: badDate, guests }));
+      await assertFails(save({ ...guestSession, date: badDate, fixedPlayerIds: participants }));
+      assert.equal((await getDoc(doc(db, base + '/sessions/' + badDate))).exists(), false);
+      const profiles = Object.fromEntries(Array.from({ length: 8 }, (_, i) => [`guest00${i + 1}`, { name: `게스트${i + 1}` }]));
+      const all = [...ids, ...Object.keys(profiles)], full = generateSchedule(all, allocateForWindow(all, 6), { attempts: 20 });
+      await assertSucceeds(save({ ...session, date: '2026-12-20', participantIds: all, fixedPlayerIds: ids, guests: profiles, lockedPairs: [], endTime: '22:00', matchMap: full.matchMap, partnerRepeats: full.partnerRepeats }));
+    });
     const result = { date: '2026-10-07', matchId: 'r1-c1', scoreA: 6, scoreB: 4, outcome: 'teamA', revision: 1, updatedAt: serverTimestamp() };
     await t.test('score validation and valid anonymous creation', async () => {
       await assertFails(setDoc(resultRef, { ...result, scoreA: -1 }));

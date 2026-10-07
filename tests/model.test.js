@@ -2,7 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { ranking, recordsFrom, validateSession, quarter, validDate, nextSunday, meetingWindow } from '../src/model.js';
 import { allocateGames, allocateForWindow, generateSchedule } from '../src/scheduler.js';
-import players from '../data/players.json' with { type: 'json' };
+import clubPlayers from '../data/players.json' with { type: 'json' };
+import periods from '../data/periods.json' with { type: 'json' };
+const players = clubPlayers.filter(player => periods.find(period => period.id === '2026-Q4').memberIds.includes(player.id));
 let seed = 12026;
 function random() { seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0; return seed / 4294967296; }
 test('4–14 attendees, targets 2–4: fair quotas, exact counts, no simultaneous appearances', () => {

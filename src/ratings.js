@@ -1,4 +1,5 @@
 import { quarter, validDate, validResult } from './model.js';
+import { GUEST_STRENGTH, validateGuests } from './guests.js';
 
 const clamp = value => Math.max(0, Math.min(1, value));
 
@@ -30,12 +31,13 @@ export function strengthsForSession(records, ids, baseline, date) {
     const { teamA, teamB } = record;
     if (!Array.isArray(teamA) || !Array.isArray(teamB) || teamA.length !== 2 || teamB.length !== 2) continue;
     const active = [...teamA, ...teamB];
-    if (new Set(active).size !== 4 || active.some(id => !(id in priors) || !record.fixedPlayerIds?.includes(id))) continue;
-    const mean = team => team.reduce((sum, id) => sum + priors[id], 0) / 2;
+    try { validateGuests(record.guests || {}); } catch { continue; }
+    if (new Set(active).size !== 4 || active.some(id => id in priors ? !record.fixedPlayerIds?.includes(id) : !Object.hasOwn(record.guests || {}, id))) continue;
+    const mean = team => team.reduce((sum, id) => sum + (priors[id] ?? GUEST_STRENGTH), 0) / 2;
     const expected = 1 / (1 + Math.exp(-4 * (mean(teamA) - mean(teamB))));
     const actual = record.outcome === 'draw' ? 0.5 : record.outcome === 'teamA' ? 1 : 0;
-    for (const id of teamA) { observations[id].games++; observations[id].residual += actual - expected; }
-    for (const id of teamB) { observations[id].games++; observations[id].residual -= actual - expected; }
+    for (const id of teamA) if (observations[id]) { observations[id].games++; observations[id].residual += actual - expected; }
+    for (const id of teamB) if (observations[id]) { observations[id].games++; observations[id].residual -= actual - expected; }
   }
   return Object.fromEntries(ids.map(id => {
     const { games, residual } = observations[id];
