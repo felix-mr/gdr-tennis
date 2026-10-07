@@ -6,6 +6,15 @@ export function validDate(date) {
   return typeof date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(date) && !Number.isNaN(Date.parse(date)) && new Date(date).toISOString().slice(0, 10) === date;
 }
 export const outcome = (a, b) => a > b ? 'teamA' : a < b ? 'teamB' : 'draw';
+export const MAX_ROUNDS = 47;
+export function meetingWindow(startTime, endTime) {
+  const validTime = value => typeof value === 'string' && /^([01]\d|2[0-3]):(00|30)$/.test(value);
+  if (!validTime(startTime) || !validTime(endTime)) throw new Error('시작·종료 시간을 30분 단위로 선택해 주세요.');
+  const minutes = value => { const [hour, minute] = value.split(':').map(Number); return hour * 60 + minute; };
+  const duration = minutes(endTime) - minutes(startTime);
+  if (duration <= 0) throw new Error('종료 시간을 시작 시간보다 뒤로 선택해 주세요.');
+  return duration / 30;
+}
 export const validScore = value => Number.isInteger(value) && value >= 0 && value <= 99;
 export function validResult(result) { return result && validScore(result.scoreA) && validScore(result.scoreB) && result.outcome === outcome(result.scoreA, result.scoreB); }
 export function quarter(date) { return `${date.slice(0, 4)}-Q${Math.ceil(Number(date.slice(5, 7)) / 3)}`; }
@@ -40,14 +49,16 @@ export function ranking(records, players) {
 }
 export function validateSession(s, knownIds) {
   if (!s || !validDate(s.date) || !Array.isArray(s.participantIds) || s.participantIds.length < 4 || new Set(s.participantIds).size !== s.participantIds.length || s.participantIds.some(id => !knownIds.includes(id)) || !Array.isArray(s.fixedPlayerIds) || s.fixedPlayerIds.some(id => !s.participantIds.includes(id)) || !s.matchMap || !Object.keys(s.matchMap).length || !/^\d{2}:\d{2}$/.test(s.startTime) || !Number.isInteger(s.roundMinutes) || s.roundMinutes < 10 || s.roundMinutes > 120) throw new Error('대진표 형식이 올바르지 않습니다.');
+  const availableRounds = s.endTime ? meetingWindow(s.startTime, s.endTime) : MAX_ROUNDS;
+  if (s.endTime && s.roundMinutes !== 30) throw new Error('경기 시간은 30분 고정입니다.');
   const active = {}, counts = Object.fromEntries(s.participantIds.map(id => [id, 0]));
   for (const [key, m] of Object.entries(s.matchMap)) {
     const ids = [...(m.teamA || []), ...(m.teamB || [])];
-    if (!Number.isInteger(m.round) || m.round < 1 || ![1, 2].includes(m.court) || key !== `r${m.round}-c${m.court}` || m.teamA.length !== 2 || m.teamB.length !== 2 || new Set(ids).size !== 4 || ids.some(id => !s.participantIds.includes(id))) throw new Error('대진표에 잘못된 경기가 있습니다.');
+    if (!Number.isInteger(m.round) || m.round < 1 || m.round > availableRounds || ![1, 2].includes(m.court) || key !== `r${m.round}-c${m.court}` || m.teamA.length !== 2 || m.teamB.length !== 2 || new Set(ids).size !== 4 || ids.some(id => !s.participantIds.includes(id))) throw new Error('대진표에 잘못된 경기가 있습니다.');
     active[m.round] ??= new Set();
     for (const id of ids) { if (active[m.round].has(id)) throw new Error('같은 라운드에 중복 출전이 있습니다.'); active[m.round].add(id); counts[id]++; }
   }
-  if (Object.values(counts).some(n => n < 2 || n > 4)) throw new Error('개인 경기 수는 2~4경기여야 합니다.');
+  if (Object.values(counts).some(n => n < 1 || n > availableRounds)) throw new Error('개인 경기 수를 모임 시간에 맞춰 주세요.');
   if (s.lockedPairs) {
     if (!Array.isArray(s.lockedPairs) || s.lockedPairs.some(pair => !Array.isArray(pair) || pair.length !== 2 || pair[0] === pair[1] || pair.some(id => !s.participantIds.includes(id))) || new Set(s.lockedPairs.flat()).size !== s.lockedPairs.flat().length) throw new Error('대회 준비 페어를 확인해 주세요.');
   }

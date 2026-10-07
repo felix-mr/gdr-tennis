@@ -1,63 +1,70 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    function optionalMatch(matches, key, round, court, members) {
-      let m = matches.get(key, {'teamA': [], 'teamB': []});
-      let ids = m.teamA.concat(m.teamB);
-      return !(key in matches) || (m.round == round && m.court == court
-        && m.teamA.size() == 2 && m.teamB.size() == 2
-        && ids.toSet().size() == 4 && ids.hasOnly(members));
+    function minutes(time) {
+      let parts = time.split(':');
+      return int(parts[0]) * 60 + int(parts[1]);
     }
-    function distinctCourts(matches, first, second) {
-      let a = matches.get(first, {});
-      let b = matches.get(second, {});
-      return !(first in matches) || !(second in matches)
-        || a.teamA.concat(a.teamB).concat(b.teamA).concat(b.teamB).toSet().size() == 8;
+    function validHeader(date) {
+      let d = request.resource.data;
+      let window = (minutes(d.endTime) - minutes(d.startTime)) / 30;
+      return d.keys().hasAll(['schemaVersion', 'date', 'participantIds', 'fixedPlayerIds', 'startTime', 'endTime', 'roundMinutes', 'partnerRepeats', 'lockedPairs', 'roundCount', 'matchCount', 'createdAt'])
+        && d.keys().hasOnly(['schemaVersion', 'date', 'participantIds', 'fixedPlayerIds', 'startTime', 'endTime', 'roundMinutes', 'partnerRepeats', 'lockedPairs', 'roundCount', 'matchCount', 'createdAt'])
+        && d.schemaVersion == 2 && d.date == date
+        && date.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
+        && d.participantIds is list && d.participantIds.size() >= 4 && d.participantIds.size() <= 14
+        && d.participantIds.toSet().size() == d.participantIds.size()
+        && d.participantIds.hasOnly(['gdr001', 'gdr002', 'gdr003', 'gdr004', 'gdr005', 'gdr006', 'gdr007', 'gdr008', 'gdr009', 'gdr010', 'gdr011', 'gdr012', 'gdr013', 'gdr014'])
+        && d.fixedPlayerIds == d.participantIds
+        && d.startTime.matches('^([01][0-9]|2[0-3]):(00|30)$')
+        && d.endTime.matches('^([01][0-9]|2[0-3]):(00|30)$')
+        && window >= 1 && window <= 47 && d.roundMinutes == 30
+        && d.roundCount is int && d.roundCount >= 1 && d.roundCount <= window
+        && d.matchCount is int && d.matchCount >= d.roundCount && d.matchCount <= d.roundCount * 2
+        && d.lockedPairs is list && d.lockedPairs.size() <= 7
+        && d.partnerRepeats is int && d.partnerRepeats >= 0
+        && d.createdAt == request.time;
+    }
+    function validRound(date, roundId) {
+      let d = request.resource.data;
+      let s = getAfter(/databases/$(database)/documents/clubs/gdr/sessions/$(date)).data;
+      let first = 'r' + roundId + '-c1';
+      let second = 'r' + roundId + '-c2';
+      let a = d.matchMap.get(first, {'teamA': [], 'teamB': []});
+      let b = d.matchMap.get(second, {'teamA': [], 'teamB': []});
+      let ids = a.teamA.concat(a.teamB).concat(b.teamA).concat(b.teamB);
+      return s.schemaVersion == 2
+        && d.keys().hasAll(['round', 'matchMap']) && d.keys().hasOnly(['round', 'matchMap'])
+        && d.round is int && d.round >= 1 && d.round <= s.roundCount && roundId == string(d.round)
+        && d.matchMap is map && d.matchMap.size() >= 1 && d.matchMap.size() <= 2
+        && d.matchMap.keys().hasOnly([first, second])
+        && (!(first in d.matchMap) || (a.keys().hasOnly(['round', 'court', 'teamA', 'teamB']) && a.round == d.round && a.court == 1 && a.teamA.size() == 2 && a.teamB.size() == 2))
+        && (!(second in d.matchMap) || (b.keys().hasOnly(['round', 'court', 'teamA', 'teamB']) && b.round == d.round && b.court == 2 && b.teamA.size() == 2 && b.teamB.size() == 2))
+        && ids.toSet().size() == ids.size() && ids.hasOnly(s.participantIds);
     }
     match /clubs/gdr/sessions/{date} {
-      function validSession() {
-        let d = request.resource.data;
-        return d.keys().hasAll(['schemaVersion', 'date', 'participantIds', 'fixedPlayerIds', 'startTime', 'roundMinutes', 'matchMap', 'partnerRepeats', 'createdAt'])
-          && d.keys().hasOnly(['schemaVersion', 'date', 'participantIds', 'fixedPlayerIds', 'startTime', 'endTime', 'roundMinutes', 'matchMap', 'partnerRepeats', 'lockedPairs', 'createdAt'])
-          && d.schemaVersion == 1
-          && date.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$') && d.date == date
-          && d.participantIds is list && d.participantIds.size() >= 4 && d.participantIds.size() <= 14
-          && d.participantIds.toSet().size() == d.participantIds.size()
-          && d.participantIds.hasOnly(['gdr001', 'gdr002', 'gdr003', 'gdr004', 'gdr005', 'gdr006', 'gdr007', 'gdr008', 'gdr009', 'gdr010', 'gdr011', 'gdr012', 'gdr013', 'gdr014'])
-          && d.fixedPlayerIds == d.participantIds
-          && d.matchMap is map && d.matchMap.size() >= 2 && d.matchMap.size() <= 8
-          && d.matchMap.keys().hasOnly(['r1-c1', 'r1-c2', 'r2-c1', 'r2-c2', 'r3-c1', 'r3-c2', 'r4-c1', 'r4-c2'])
-          && optionalMatch(d.matchMap, 'r1-c1', 1, 1, d.participantIds)
-          && optionalMatch(d.matchMap, 'r1-c2', 1, 2, d.participantIds)
-          && optionalMatch(d.matchMap, 'r2-c1', 2, 1, d.participantIds)
-          && optionalMatch(d.matchMap, 'r2-c2', 2, 2, d.participantIds)
-          && optionalMatch(d.matchMap, 'r3-c1', 3, 1, d.participantIds)
-          && optionalMatch(d.matchMap, 'r3-c2', 3, 2, d.participantIds)
-          && optionalMatch(d.matchMap, 'r4-c1', 4, 1, d.participantIds)
-          && optionalMatch(d.matchMap, 'r4-c2', 4, 2, d.participantIds)
-          && distinctCourts(d.matchMap, 'r1-c1', 'r1-c2')
-          && distinctCourts(d.matchMap, 'r2-c1', 'r2-c2')
-          && distinctCourts(d.matchMap, 'r3-c1', 'r3-c2')
-          && distinctCourts(d.matchMap, 'r4-c1', 'r4-c2')
-          && (!('lockedPairs' in d) || (d.lockedPairs is list && d.lockedPairs.size() <= 7))
-          && d.roundMinutes == 30
-          && d.startTime == '19:00'
-          && d.endTime == '21:00'
-          && d.partnerRepeats is int && d.partnerRepeats >= 0
-          && d.createdAt == request.time;
-      }
       allow read: if true;
-      // Public score entry matches club policy. A schedule is immutable once saved.
-      allow create: if validSession();
+      allow create: if validHeader(date);
       allow update, delete: if false;
+      match /rounds/{roundId} {
+        allow read: if true;
+        allow create: if validRound(date, roundId);
+        allow update, delete: if false;
+      }
+    }
+    function savedMatches(date, matchId) {
+      let s = get(/databases/$(database)/documents/clubs/gdr/sessions/$(date)).data;
+      let roundId = matchId.split('-')[0].replace('^r', '');
+      return s.schemaVersion == 2
+        ? get(/databases/$(database)/documents/clubs/gdr/sessions/$(date)/rounds/$(roundId)).data.matchMap
+        : s.matchMap;
     }
     match /clubs/gdr/matchResults/{resultId} {
       function validResult() {
         let d = request.resource.data;
-        let s = get(/databases/$(database)/documents/clubs/gdr/sessions/$(d.date)).data;
         return d.keys().hasAll(['date', 'matchId', 'scoreA', 'scoreB', 'outcome', 'revision', 'updatedAt'])
           && d.keys().hasOnly(['date', 'matchId', 'scoreA', 'scoreB', 'outcome', 'revision', 'updatedAt'])
-          && resultId == d.date + '_' + d.matchId && d.matchId in s.matchMap
+          && resultId == d.date + '_' + d.matchId && d.matchId in savedMatches(d.date, d.matchId)
           && d.scoreA is int && d.scoreA >= 0 && d.scoreA <= 99
           && d.scoreB is int && d.scoreB >= 0 && d.scoreB <= 99
           && d.outcome == (d.scoreA > d.scoreB ? 'teamA' : (d.scoreA < d.scoreB ? 'teamB' : 'draw'))

@@ -3,7 +3,7 @@ import playerData from '../data/players.json';
 const players = [...playerData].sort((a, b) => a.name.localeCompare(b.name, 'ko'));
 import periods from '../data/periods.json';
 import baseline from '../data/strength-baseline.json';
-import { koreaToday, nextSunday, quarter, recordsFrom, ranking, outcome } from './model.js';
+import { koreaToday, nextSunday, quarter, recordsFrom, ranking, outcome, meetingWindow } from './model.js';
 import { allocateForWindow, generateSchedule } from './scheduler.js';
 import { strengthsForSession } from './ratings.js';
 import { createStore, firebaseConfigured } from './store.js';
@@ -17,19 +17,20 @@ let hasSnapshot = false;
 let lockedPairs = [], prepSelection = new Set();
 try { const pairs = JSON.parse(localStorage.getItem('gdr-prep-pairs') || '[]'); const all = pairs.flat(); if (pairs.every(pair => pair.length === 2 && pair.every(id => names[id])) && new Set(all).size === all.length) lockedPairs = pairs; } catch {}
 let tab = 'schedule', selected = new Set(players.map(p => p.id)), date = nextSunday(koreaToday()), filter = quarter(koreaToday()), playerFilter = '', dirty = new Map();
-const roundMinutes = 30, startTime = '19:00', endTime = '21:00';
+const roundMinutes = 30;
+let startTime = '19:00', endTime = '21:00';
 let status = firebaseConfigured ? '공유 기록 연결 중…' : '로컬 기록 불러오는 중…';
 const initialQuarter = quarter(koreaToday());
 $('#app').innerHTML = `
 <header><a class="brand" href="#" aria-label="GDR 홈"><span class="brand-mark">G<span class="ball"></span></span><span>GDR <small>TENNIS CLUB</small></span></a><span class="season">${initialQuarter.replace('-Q', ' · Q')}</span></header>
-<main><div class="page-head"><div><p class="eyebrow">OUR COURT, OUR GAME</p><h1>함께 치고,<br class="mobile-only"> 기록은 차곡차곡.</h1><p class="subtitle">매주 일요일 19:00–21:00 · 두 코트에서 함께.</p></div><div class="club-stamp"><strong>14</strong><span>고정 멤버 · 복식</span></div></div>
+<main><div class="page-head"><div><p class="eyebrow">OUR COURT, OUR GAME</p><h1>함께 치고,<br class="mobile-only"> 기록은 차곡차곡.</h1><p class="subtitle">매주 일요일 · 기본 19:00–21:00 · 두 코트에서 함께.</p></div><div class="club-stamp"><strong>14</strong><span>고정 멤버 · 복식</span></div></div>
 <nav class="tabs" aria-label="화면 선택"><button data-tab="schedule" aria-selected="true">대진표</button><button data-tab="ranking" aria-selected="false">순위 · 기록</button><button data-tab="prep" aria-selected="false">대회 준비</button><button data-tab="members" aria-selected="false">멤버</button></nav>
 <div class="connection"><span class="status-dot"></span><span id="connection-status" role="status"></span></div>
 <section id="schedule-view">
 <div class="section-heading"><div><h2>오늘의 대진</h2><p>참석자를 고르고, 두 코트에 공평하게.</p></div><label class="date-control">모임 날짜<input id="date" type="date" value="${date}" required></label></div>
 <div class="builder" id="builder"><div class="panel-top"><h3>참석 멤버 <span id="selected-count"></span></h3><button id="select-all" class="text-button">전체 해제</button></div><div class="player-grid" id="attendees"></div>
-<div class="session-settings"><div class="time-setting"><span class="setting-label">모임 시간</span><div class="time-range"><label><span>시작</span><strong>19:00</strong></label><span class="range-arrow">→</span><label><span>종료</span><strong>21:00</strong></label></div></div><div class="court-info"><span class="court-icon" aria-hidden="true"></span><div><strong>2면</strong><span>복식 · 30분 고정</span></div></div></div>
-<div class="builder-bottom"><p>참석 인원·모임 시간에 맞춰 2~4경기 자동 배정.<br>추가 경기는 누적 경기 수가 적은 멤버 우선.</p><button id="generate" class="primary">대진 만들기 <span>↗</span></button></div></div>
+<div class="session-settings"><div class="time-setting"><span class="setting-label">모임 시간</span><div class="time-range"><label><span>시작</span><input id="start" aria-label="모임 시작 시간" type="time" step="1800" value="${startTime}" required></label><span class="range-arrow">→</span><label><span>종료</span><input id="end" aria-label="모임 종료 시간" type="time" step="1800" value="${endTime}" required></label></div><p class="time-hint">날짜별 변경 가능 · 30분 단위 · 같은 날 기준</p></div><div class="court-info"><span class="court-icon" aria-hidden="true"></span><div><strong>2면</strong><span>복식 · 30분 고정</span></div></div></div>
+<div class="builder-bottom"><p>그날 참석 인원·모임 시간에 맞춰 자동 배정.<br>개인별 경기 수 차이는 최대 1경기.</p><button id="generate" class="primary">대진 만들기 <span>↗</span></button></div></div>
 <button id="prep-shortcut" data-tab="prep" class="prep-shortcut">대회 준비 페어 설정 →</button><div id="schedule-content"></div></section>
 <section id="ranking-view" hidden><div class="section-heading"><div><h2>우리의 스코어보드</h2><p>승점은 쌓이고, 기록은 남고.</p></div><label class="period-control"><span>조회 기간</span><select id="period"></select></label></div><div id="ranking-summary" class="summary-grid"></div><div class="rank-panel"><div class="panel-top"><h3 id="ranking-title"></h3><button id="export-csv" class="text-button">CSV 내려받기 ↓</button></div><div class="table-scroll"><table><caption class="sr-only">GDR 개인 순위</caption><thead><tr><th>순위</th><th>이름</th><th>승점</th><th>경기</th><th>승</th><th>무</th><th>패</th><th>승률</th><th>득</th><th>실</th><th>득실차</th></tr></thead><tbody id="rankings"></tbody></table></div><p class="table-note">승 3점 · 무 1점 · 패 0점 / 같은 승점은 공동순위 / 승률 = 승 ÷ 전체 경기</p></div><div class="section-heading history-head"><h3>경기 기록</h3><label class="sr-only" for="player-filter">선수</label><select id="player-filter"><option value="">전체 멤버</option>${players.map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join('')}</select></div><div id="history"></div></section>
 <section id="prep-view" hidden><div class="section-heading"><div><h2>같이 나갈 우리 조</h2><p>대회를 준비하는 두 멤버를 페어로 등록해 주세요.</p></div></div><div class="prep-editor"><div class="panel-top"><h3>멤버 두 명 선택</h3><span id="prep-selection-count">0 / 2</span></div><div id="prep-candidates" class="prep-candidates"></div><div class="prep-selection-footer"><p id="prep-selection-label">함께할 두 멤버를 선택해 주세요.</p><button id="add-prep-pair" class="primary" disabled>페어 등록</button></div></div><div class="section-heading prep-list-heading"><h3>등록된 페어 <span id="prep-pair-count">0조</span></h3><p>함께 참석하면 같은 팀으로 출전합니다.</p></div><div id="prep-pairs" class="prep-pairs"></div><p class="prep-footnote">한 멤버는 한 페어에 등록 가능. 한 명이 불참하면 해당 모임에는 적용하지 않습니다.</p></section>
@@ -42,9 +43,6 @@ function renderAttendees() {
   renderPrep();
 }
 function updateConnection() { $('#connection-status').textContent = status; document.querySelector('.status-dot').classList.toggle('connected', writable); }
-function currentTotals() {
-  return Object.fromEntries(ranking(recordsFrom(state).filter(r => quarter(r.date) === quarter(date) && r.date < date), players).map(r => [r.id, r.games]));
-}
 function renderSchedule() {
   const session = state.sessions[date] || draft;
   $('#builder').hidden = !!state.sessions[date];
@@ -54,8 +52,9 @@ function renderSchedule() {
   const rounds = [...new Set(entries.map(([, m]) => m.round))].sort((a, b) => a - b);
   const counts = Object.fromEntries(session.participantIds.map(id => [id, entries.filter(([, m]) => [...m.teamA, ...m.teamB].includes(id)).length]));
   const prepExceptions = (session.lockedPairs || []).reduce((sum, [a, b]) => sum + counts[a] - entries.filter(([, m]) => [m.teamA, m.teamB].some(team => team.includes(a) && team.includes(b))).length, 0);
-  content.innerHTML = `<div class="schedule-meta"><div><span class="label-tag">${saved ? '저장된 대진' : '대진 미리보기'}</span><strong>${entries.length}경기 · ${rounds.length}라운드</strong><span>${completed}/${entries.length} 점수 입력</span></div><div>${saved ? '<button class="secondary" id="print">인쇄</button>' : `<button class="secondary" id="regenerate">다시 배정</button><button class="primary" id="save-schedule" ${!writable ? 'disabled' : ''}>대진 확정·저장</button>`}</div></div>
-<div class="allocation"><div class="panel-top"><h3>개인별 경기 수</h3><span>분기 누적 → 이번 모임</span></div><div class="allocation-grid">${session.participantIds.map(id => `<label><span>${esc(names[id])}<small>누적 ${currentTotals()[id] || 0}경기</small></span>${saved ? `<strong>${counts[id]}경기</strong>` : `<select data-quota="${id}" aria-label="${esc(names[id])} 경기 수">${[2, 3, 4].map(n => `<option value="${n}" ${counts[id] === n ? 'selected' : ''}>${n}경기</option>`).join('')}</select>`}</label>`).join('')}</div>${!saved ? '<p class="hint">개인 경기 수를 바꾸면 다시 배정됩니다. 총합은 4의 배수여야 합니다.</p><button id="apply-quotas" class="text-button">경기 수 조정 적용 →</button>' : ''}${session.lockedPairs?.length ? `<p class="hint">대회 준비 페어 ${session.lockedPairs.length}조 적용${prepExceptions ? ` · 참석 인원상 ${prepExceptions}회는 다른 파트너로 출전` : ''}</p>` : ''}${session.partnerRepeats ? `<p class="hint">같은 파트너 ${session.partnerRepeats}회 반복. 참가 인원·경기 수에 따른 배정입니다.</p>` : '<p class="hint">같은 파트너 중복 없이 배정.</p>'}</div>
+  const maxGames = session.endTime ? meetingWindow(session.startTime, session.endTime) : Math.max(...Object.values(counts));
+  content.innerHTML = `<div class="schedule-meta"><div><span class="label-tag">${saved ? '저장된 대진' : '대진 미리보기'}</span><strong>${entries.length}경기 · ${rounds.length}라운드</strong><span>${session.startTime}${session.endTime ? `–${session.endTime}` : ''}</span><span>${completed}/${entries.length} 점수 입력</span></div><div>${saved ? '<button class="secondary" id="print">인쇄</button>' : `<button class="secondary" id="regenerate">다시 배정</button><button class="primary" id="save-schedule" ${!writable ? 'disabled' : ''}>대진 확정·저장</button>`}</div></div>
+<div class="allocation"><div class="panel-top"><h3>개인별 경기 수</h3><span>이번 모임</span></div><div class="allocation-grid">${session.participantIds.map(id => `<label><span>${esc(names[id])}</span>${saved ? `<strong>${counts[id]}경기</strong>` : `<select data-quota="${id}" aria-label="${esc(names[id])} 경기 수">${Array.from({ length: maxGames }, (_, i) => i + 1).map(n => `<option value="${n}" ${counts[id] === n ? 'selected' : ''}>${n}경기</option>`).join('')}</select>`}</label>`).join('')}</div>${!saved ? '<p class="hint">개인 경기 수를 바꾸면 다시 배정됩니다. 총합은 4의 배수여야 합니다.</p><button id="apply-quotas" class="text-button">경기 수 조정 적용 →</button>' : ''}${session.lockedPairs?.length ? `<p class="hint">대회 준비 페어 ${session.lockedPairs.length}조 적용${prepExceptions ? ` · 참석 인원상 ${prepExceptions}회는 다른 파트너로 출전` : ''}</p>` : ''}${session.partnerRepeats ? `<p class="hint">같은 파트너 ${session.partnerRepeats}회 반복. 참가 인원·경기 수에 따른 배정입니다.</p>` : '<p class="hint">같은 파트너 중복 없이 배정.</p>'}</div>
 ${rounds.map(round => {
   const matches = entries.filter(([, m]) => m.round === round), active = matches.flatMap(([, m]) => [...m.teamA, ...m.teamB]);
   const [hour, minute] = session.startTime.split(':').map(Number), minutes = hour * 60 + minute + (round - 1) * session.roundMinutes;
@@ -103,12 +102,11 @@ function renderPrep() {
 function render() { updateConnection(); renderSchedule(); renderRanking(); renderPrep(); }
 function switchTab(value) { tab = value; document.querySelectorAll('[data-tab]').forEach(button => button.setAttribute('aria-selected', String(button.dataset.tab === tab))); for (const name of ['schedule', 'ranking', 'prep', 'members']) $(`#${name}-view`).hidden = name !== tab; }
 function build(quotas) {
-  if (!$('#date').value) throw new Error('날짜와 시작 시간을 입력해 주세요.');
+  if (!$('#date').value) throw new Error('모임 날짜를 입력해 주세요.');
   const ids = [...selected];
-  const minutes = value => { const [h, m] = value.split(':').map(Number); return h * 60 + m; };
-  const windowRounds = (minutes(endTime) - minutes(startTime)) / roundMinutes;
+  const windowRounds = meetingWindow(startTime, endTime);
   const activePairs = lockedPairs.filter(pair => pair.every(id => ids.includes(id)));
-  quotas ??= allocateForWindow(ids, windowRounds, currentTotals(), activePairs);
+  quotas ??= allocateForWindow(ids, windowRounds, activePairs);
   const strengths = strengthsForSession(recordsFrom(state), players.map(p => p.id), baseline, date);
   const result = generateSchedule(ids, quotas, { strengths, lockedPairs: activePairs });
   if (Math.max(...Object.values(result.matchMap).map(m => m.round)) > windowRounds) throw new Error('조정한 경기 수를 모임 시간 안에 배정할 수 없습니다. 종료 시간을 늘리거나 경기 수를 줄여 주세요.');
@@ -154,8 +152,8 @@ $('#app').addEventListener('change', async event => {
     if (control) control.value = input.value;
   }
   else if (input.closest('#attendees')) { if (input.checked) selected.add(input.value); else selected.delete(input.value); draft = null; renderAttendees(); renderSchedule(); }
-  else if (input.id === 'date') { date = input.value; draft = null; dirty.clear(); renderSchedule(); }
-  else if (['start', 'end'].includes(input.id)) { draft = null; renderSchedule(); }
+  else if (input.id === 'date') { date = input.value; startTime = state.sessions[date]?.startTime || '19:00'; endTime = state.sessions[date]?.endTime || '21:00'; $('#start').value = startTime; $('#end').value = endTime; draft = null; dirty.clear(); renderSchedule(); }
+  else if (['start', 'end'].includes(input.id)) { startTime = $('#start').value; endTime = $('#end').value; draft = null; renderSchedule(); }
   else if (input.id === 'period') { filter = input.value; renderRanking(); }
   else if (input.id === 'player-filter') { playerFilter = input.value; renderRanking(); }
   else if (input.id === 'import' && input.files[0]) {

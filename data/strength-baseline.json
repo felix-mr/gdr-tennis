@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "sourcePeriod": null,
-  "priorGames": 12,
+  "priorGames": 24,
   "groups": [
     ["gdr001", "gdr002"],
     ["gdr005", "gdr004"],

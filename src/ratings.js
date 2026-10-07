@@ -17,11 +17,12 @@ export function initialStrengths(ids, baseline = {}) {
 }
 
 // Shrink opponent-adjusted results toward the supplied prior. Attendance affects
-// confidence, not a player's performance score. The prior represents 12 games.
+// confidence, not a player's performance score. A quadratic ramp keeps the
+// supplied prior dominant early, with equal weights after 24 recorded games.
 export function strengthsForSession(records, ids, baseline, date) {
   if (!validDate(date)) throw new Error('모임 날짜를 확인해 주세요.');
   const priors = initialStrengths(ids, baseline);
-  const priorGames = baseline.priorGames ?? 12;
+  const priorGames = baseline.priorGames ?? 24;
   if (!Number.isFinite(priorGames) || priorGames <= 0) throw new Error('대진 초기 설정을 확인해 주세요.');
   const observations = Object.fromEntries(ids.map(id => [id, { games: 0, residual: 0 }]));
   for (const record of records) {
@@ -40,7 +41,7 @@ export function strengthsForSession(records, ids, baseline, date) {
     const { games, residual } = observations[id];
     if (!games) return [id, priors[id]];
     const performance = clamp(priors[id] + residual / games);
-    const weight = games / (games + priorGames);
+    const weight = games ** 2 / (games ** 2 + priorGames ** 2);
     return [id, priors[id] * (1 - weight) + performance * weight];
   }));
 }

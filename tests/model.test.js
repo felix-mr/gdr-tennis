@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { ranking, recordsFrom, validateSession, quarter, validDate, nextSunday } from '../src/model.js';
+import { ranking, recordsFrom, validateSession, quarter, validDate, nextSunday, meetingWindow } from '../src/model.js';
 import { allocateGames, allocateForWindow, generateSchedule } from '../src/scheduler.js';
 import players from '../data/players.json' with { type: 'json' };
 let seed = 12026;
@@ -60,13 +60,13 @@ test('meeting window determines quotas without target selector', () => {
   assert.equal(Object.values(quotas).filter(n => n === 4).length, 6);
   const result = generateSchedule(ids, quotas, { random });
   assert.ok(Math.max(...Object.values(result.matchMap).map(m => m.round)) <= 6);
-  assert.throws(() => allocateForWindow(ids, 3), /時間|시간/);
+  assert.throws(() => allocateForWindow(ids, 1), /시간/);
   assert.throws(() => allocateForWindow(ids, 0), /종료 시간/);
 });
 test('all feasible windows fit for 4–14 attendees', () => {
   for (let n = 4; n <= 14; n++) for (let rounds = 2; rounds <= 7; rounds++) {
     const ids = players.slice(0, n).map(p => p.id), capacity = rounds * (n >= 8 ? 8 : 4);
-    if (capacity < Math.ceil(n * 2 / 4) * 4) continue;
+    if (capacity < n) continue;
     const quotas = allocateForWindow(ids, rounds);
     const result = generateSchedule(ids, quotas, { random, attempts: 100 });
     assert.ok(Math.max(...Object.values(result.matchMap).map(m => m.round)) <= rounds);
@@ -97,7 +97,7 @@ test('Sunday evening club date defaults to next Sunday in Korea', () => {
 });
 test('preparation pair stays together and receives same number of games', () => {
   const ids = players.map(p => p.id), lockedPairs = [[ids[0], ids[1]], [ids[2], ids[3]]];
-  const quotas = allocateForWindow(ids, 4, {}, lockedPairs);
+  const quotas = allocateForWindow(ids, 4, lockedPairs);
   for (const [a, b] of lockedPairs) assert.equal(quotas[a], quotas[b]);
   const result = generateSchedule(ids, quotas, { random, lockedPairs, attempts: 100 });
   for (const [a, b] of lockedPairs) {
@@ -108,13 +108,53 @@ test('preparation pair stays together and receives same number of games', () => 
 });
 test('odd group with two prep pairs still gives every member their games', () => {
   const ids = players.slice(0, 5).map(p => p.id), lockedPairs = [[ids[0], ids[1]], [ids[2], ids[3]]];
-  const quotas = allocateForWindow(ids, 4, {}, lockedPairs);
+  const quotas = allocateForWindow(ids, 4, lockedPairs);
   const result = generateSchedule(ids, quotas, { random, lockedPairs, attempts: 80 });
   validateSession({ date: '2026-10-11', participantIds: ids, fixedPlayerIds: ids, lockedPairs, matchMap: result.matchMap, startTime: '19:00', roundMinutes: 30 }, ids);
   for (const id of ids) assert.equal(Object.values(result.matchMap).filter(m => [...m.teamA, ...m.teamB].includes(id)).length, quotas[id]);
 });
 test('prep pairs cannot overlap or use an absent member', () => {
   const ids = ['a', 'b', 'c', 'd'];
-  assert.throws(() => allocateForWindow(ids, 4, {}, [['a', 'b'], ['b', 'c']]), /중복/);
-  assert.throws(() => allocateForWindow(ids, 4, {}, [['a', 'absent']]), /중복/);
+  assert.throws(() => allocateForWindow(ids, 4, [['a', 'b'], ['b', 'c']]), /중복/);
+  assert.throws(() => allocateForWindow(ids, 4, [['a', 'absent']]), /중복/);
+});
+
+test('changing Sunday hours to 19–22 gives four attendees six games each', () => {
+  const ids = players.slice(0, 4).map(p => p.id), rounds = meetingWindow('19:00', '22:00');
+  assert.equal(rounds, 6);
+  const quotas = allocateForWindow(ids, rounds);
+  assert.ok(Object.values(quotas).every(n => n === 6));
+  const { matchMap } = generateSchedule(ids, quotas, { random, attempts: 30 });
+  validateSession({ date: '2026-10-11', participantIds: ids, fixedPlayerIds: ids, matchMap, startTime: '19:00', endTime: '22:00', roundMinutes: 30 }, ids);
+  assert.equal(Object.keys(matchMap).length, 6);
+  assert.throws(() => validateSession({ date: '2026-10-11', participantIds: ids, fixedPlayerIds: ids, matchMap, startTime: '19:00', endTime: '21:00', roundMinutes: 30 }, ids), /경기/);
+});
+
+test('short sessions still give each attendee a game and daily counts differ by at most one', () => {
+  for (let n = 4; n <= 14; n++) for (const rounds of [1, 2, 4, 6, 12]) {
+    const ids = players.slice(0, n).map(p => p.id), slots = rounds * (n >= 8 ? 8 : 4);
+    if (slots < n) { assert.throws(() => allocateForWindow(ids, rounds), /시간/); continue; }
+    const quotas = Object.values(allocateForWindow(ids, rounds));
+    assert.equal(quotas.reduce((sum, value) => sum + value), slots);
+    assert.ok(Math.min(...quotas) >= 1 && Math.max(...quotas) <= rounds);
+    assert.ok(Math.max(...quotas) - Math.min(...quotas) <= 1);
+  }
+});
+
+test('daily counts stay within one game with preparation pairs and an odd number of attendees', () => {
+  const ids = players.slice(0, 5).map(p => p.id), pairs = [[ids[0], ids[1]], [ids[2], ids[3]]];
+  const quotas = allocateForWindow(ids, 6, pairs);
+  assert.deepEqual(quotas, { [ids[0]]: 5, [ids[1]]: 5, [ids[2]]: 5, [ids[3]]: 5, [ids[4]]: 4 });
+  const result = generateSchedule(ids, quotas, { random, attempts: 60, lockedPairs: pairs });
+  validateSession({ date: '2026-10-11', participantIds: ids, fixedPlayerIds: ids, matchMap: result.matchMap, startTime: '19:00', endTime: '22:00', roundMinutes: 30, lockedPairs: pairs }, ids);
+});
+
+test('invalid, reversed and overnight meeting times are rejected', () => {
+  assert.throws(() => meetingWindow('', '22:00'), /시간/);
+  assert.throws(() => meetingWindow('25:00', '22:00'), /시간/);
+  assert.throws(() => meetingWindow('19:15', '22:00'), /30분/);
+  assert.throws(() => meetingWindow('19:00', '18:00'), /종료/);
+  assert.throws(() => meetingWindow('19:00', '19:00'), /종료/);
+  assert.throws(() => meetingWindow('23:00', '01:00'), /종료/);
+  assert.equal(meetingWindow('07:00', '14:00'), 14);
 });

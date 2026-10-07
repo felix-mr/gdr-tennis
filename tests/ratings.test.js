@@ -25,7 +25,7 @@ test('one unexpected result stays close to prior; sustained outcomes can change 
   const upset = record(['gdr011', 'gdr010'], ['gdr001', 'gdr002']);
   const priors = initialStrengths(ids, baseline);
   const one = strengthsForSession([upset], ids, baseline, date);
-  assert.ok(one.gdr011 > priors.gdr011 && one.gdr011 - priors.gdr011 < 0.07);
+  assert.ok(one.gdr011 > priors.gdr011 && one.gdr011 - priors.gdr011 < 0.002);
   assert.ok(one.gdr001 > one.gdr011);
   const many = strengthsForSession(Array(24).fill(upset), ids, baseline, date);
   assert.ok(many.gdr011 > many.gdr001);
@@ -40,6 +40,7 @@ test('confidence increases with games, without rewarding attendance alone', () =
   const four = strengthsForSession(Array(4).fill(win), ids, baseline, date);
   const twelve = strengthsForSession(Array(12).fill(win), ids, baseline, date);
   assert.ok(twelve.gdr013 > four.gdr013 && four.gdr013 > priors.gdr013);
+  assert.ok(four.gdr013 - priors.gdr013 < 0.011);
 });
 
 test('a win against higher rated teams provides more evidence than an expected win', () => {
@@ -62,7 +63,7 @@ test('exclude other quarters, same/future date, invalid score, duplicate player 
 
 test('14-member weighted scheduling retains game counts, time window and preparation pair', () => {
   const lockedPairs = [['gdr001', 'gdr014']];
-  const quotas = allocateForWindow(ids, 4, {}, lockedPairs);
+  const quotas = allocateForWindow(ids, 4, lockedPairs);
   let seed = 123;
   const random = () => { seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0; return seed / 4294967296; };
   const strengths = strengthsForSession([], ids, baseline, date);

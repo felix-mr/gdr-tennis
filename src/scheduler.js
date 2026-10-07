@@ -1,4 +1,5 @@
-// Allocate indivisible doubles slots to attendees with fewer completed quarter games.
+import { MAX_ROUNDS } from './model.js';
+// Retained for old fixed-target schedules. New schedules use the meeting window.
 export function allocateGames(ids, target, totals = {}) {
   if (ids.length < 4 || new Set(ids).size !== ids.length) throw new Error('참가자 4명 이상을 중복 없이 선택해 주세요.');
   if (![2, 3, 4].includes(target)) throw new Error('목표 경기 수는 2~4경기입니다.');
@@ -13,7 +14,7 @@ export function allocateGames(ids, target, totals = {}) {
 }
 const pairKey = (a, b) => [a, b].sort().join('|');
 export function generateSchedule(ids, quotas, { random = Math.random, attempts = 250, strengths = {}, lockedPairs = [], preferredPairs = [] } = {}) {
-  if (ids.length < 4 || new Set(ids).size !== ids.length || Object.keys(quotas).length !== ids.length || ids.some(id => !Number.isInteger(quotas[id]) || quotas[id] < 2 || quotas[id] > 4)) throw new Error('참가자별 경기 수는 2~4로 설정해 주세요.');
+  if (ids.length < 4 || new Set(ids).size !== ids.length || Object.keys(quotas).length !== ids.length || ids.some(id => !Number.isInteger(quotas[id]) || quotas[id] < 1 || quotas[id] > MAX_ROUNDS)) throw new Error('참가자별 경기 수를 모임 시간에 맞춰 주세요.');
   const units = pairUnits(ids, lockedPairs);
   pairUnits(ids, preferredPairs);
   const allPreferred = [...lockedPairs, ...preferredPairs];
@@ -23,6 +24,7 @@ export function generateSchedule(ids, quotas, { random = Math.random, attempts =
   const slots = ids.reduce((sum, id) => sum + quotas[id], 0);
   if (slots % 4) throw new Error(`총 ${slots}회 배정입니다. 복식은 총합이 4의 배수여야 합니다. 개인 경기 수를 조정해 주세요.`);
   const rounds = Math.max(...Object.values(quotas), Math.ceil(slots / (ids.length >= 8 ? 8 : 4)));
+  if (rounds > MAX_ROUNDS) throw new Error('모임 시간을 같은 날 안에서 설정해 주세요.');
   const strength = id => Number.isFinite(strengths[id]) && strengths[id] >= 0 && strengths[id] <= 1 ? strengths[id] : 0.5;
   let best = null;
   for (let attempt = 0; attempt < attempts; attempt++) {
@@ -90,21 +92,25 @@ export function generateSchedule(ids, quotas, { random = Math.random, attempts =
   return best;
 }
 
-export function allocateForWindow(ids, rounds, totals = {}, lockedPairs = []) {
+export function allocateForWindow(ids, rounds, lockedPairs = []) {
   if (ids.length < 4 || new Set(ids).size !== ids.length) throw new Error('참가자 4명 이상을 중복 없이 선택해 주세요.');
   if (!Number.isInteger(rounds) || rounds < 1) throw new Error('모임 종료 시간을 시작 시간보다 뒤로 설정해 주세요.');
-  const slots = Math.min(Math.floor(ids.length * 4 / 4) * 4, rounds * (ids.length >= 8 ? 8 : 4));
-  if (slots < Math.ceil(ids.length * 2 / 4) * 4) throw new Error('모두 최소 2경기를 하기에 시간이 부족합니다. 모임 시간을 늘리거나 한 경기 시간을 줄여 주세요.');
+  if (rounds > MAX_ROUNDS) throw new Error('모임 시간을 같은 날 안에서 설정해 주세요.');
+  const slots = rounds * (ids.length >= 8 ? 8 : 4);
+  if (slots < ids.length) throw new Error('모두 한 경기씩 하기에 시간이 부족합니다. 모임 시간을 늘려 주세요.');
   const units = pairUnits(ids, lockedPairs);
-  const counts = Object.fromEntries(ids.map(id => [id, 2]));
-  let assigned = ids.length * 2;
-  while (assigned < slots) {
-    const next = units.filter(unit => counts[unit[0]] < 4 && unit.length <= slots - assigned).sort((a, b) => counts[a[0]] - counts[b[0]] || a.reduce((sum, id) => sum + (totals[id] || 0), 0) / a.length - b.reduce((sum, id) => sum + (totals[id] || 0), 0) / b.length || a[0].localeCompare(b[0]))[0];
-    if (!next) throw new Error('대회 준비 페어의 경기 수를 배정하지 못했습니다. 참석자 또는 페어를 확인해 주세요.');
-    for (const id of next) counts[id]++;
-    assigned += next.length;
-  }
-  return counts;
+  const candidates = units.map(unit => ({ unit, order: Math.random() })).sort((a, b) => a.order - b.order).map(item => item.unit);
+  const base = Math.floor(slots / ids.length);
+  const chooseExtras = (index, needed) => {
+    if (!needed) return [];
+    if (needed < 0 || index === candidates.length) return null;
+    const included = chooseExtras(index + 1, needed - candidates[index].length);
+    return included ? [...candidates[index], ...included] : chooseExtras(index + 1, needed);
+  };
+  const extras = chooseExtras(0, slots - base * ids.length);
+  if (!extras) throw new Error('대회 준비 페어의 경기 수를 배정하지 못했습니다. 참석자 또는 페어를 확인해 주세요.');
+  const additional = new Set(extras);
+  return Object.fromEntries(ids.map(id => [id, base + Number(additional.has(id))]));
 }
 
 function pairUnits(ids, pairs) {

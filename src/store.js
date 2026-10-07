@@ -1,6 +1,6 @@
 import { validResult, validateSession } from './model.js';
 import players from '../data/players.json';
-import { encodeSession, decodeSession } from './session-codec.js';
+import { encodeSession, encodeRounds, decodeSession } from './session-codec.js';
 const KEY = 'gdr-tennis-v1';
 const blank = () => ({ schemaVersion: 1, sessions: {}, results: {} });
 const clone = value => structuredClone(value);
@@ -49,17 +49,31 @@ export async function createStore(onChange, onStatus) {
   const db = fs.getFirestore(app);
   canWrite = true;
   const base = 'clubs/gdr';
+  const sessionCache = new Map();
+  let sessionSnapshotVersion = 0;
   let sessionReady = false, resultReady = false;
   const ready = () => { if (sessionReady && resultReady) { notify(); report(canWrite ? '공유 기록 연결됨 · 로그인 없이 입력' : '공유 기록 연결됨 · 조회 가능'); } };
   for (const type of ['sessions', 'matchResults']) {
-    fs.onSnapshot(fs.collection(db, `${base}/${type}`), { includeMetadataChanges: true }, snapshot => {
+    fs.onSnapshot(fs.collection(db, `${base}/${type}`), { includeMetadataChanges: true }, async snapshot => {
       if (snapshot.metadata.hasPendingWrites || snapshot.metadata.fromCache) return;
-      const entries = Object.fromEntries(snapshot.docs.map(d => [d.id, type === 'sessions' ? decodeSession(d.data()) : d.data()]));
+      let entries;
       if (type === 'sessions') {
-        try { for (const [id, session] of Object.entries(entries)) { validateSession(session, players.map(p => p.id)); if (id !== session.date) throw new Error('날짜 불일치'); } }
-        catch { canWrite = false; report('공유 대진표 형식을 확인해 주세요. 기존 기록은 유지됩니다.'); return; }
+        const version = ++sessionSnapshotVersion;
+        try {
+          entries = Object.fromEntries(await Promise.all(snapshot.docs.map(async doc => {
+            if (sessionCache.has(doc.id)) return [doc.id, sessionCache.get(doc.id)];
+            const header = doc.data();
+            const roundDocuments = header.schemaVersion === 2 ? (await fs.getDocsFromServer(fs.collection(db, `${base}/sessions/${doc.id}/rounds`))).docs.map(round => round.data()) : [];
+            const session = decodeSession(header, roundDocuments);
+            validateSession(session, players.map(p => p.id));
+            if (doc.id !== session.date) throw new Error('날짜 불일치');
+            sessionCache.set(doc.id, session);
+            return [doc.id, session];
+          })));
+        } catch (error) { if (version !== sessionSnapshotVersion) return; canWrite = false; report(error.code === 'permission-denied' ? '공유 기록 접근 권한을 확인해 주세요.' : '공유 대진표 형식을 확인해 주세요. 기존 기록은 유지됩니다.'); return; }
+        if (version !== sessionSnapshotVersion) return;
         state.sessions = entries; sessionReady = true;
-      } else { state.results = entries; resultReady = true; }
+      } else { state.results = Object.fromEntries(snapshot.docs.map(doc => [doc.id, doc.data()])); resultReady = true; }
       ready();
     }, error => { canWrite = false; report(error.code === 'permission-denied' ? '공유 기록 접근 권한을 확인해 주세요.' : '공유 기록 연결 실패 · 새로고침해 다시 연결'); });
   }
@@ -70,6 +84,7 @@ export async function createStore(onChange, onStatus) {
       const ref = fs.doc(db, `${base}/sessions/${s.date}`);
       if ((await tx.get(ref)).exists()) throw new Error('이미 저장된 날짜입니다.');
       tx.set(ref, { ...encodeSession(s), createdAt: fs.serverTimestamp() });
+      for (const [round, data] of Object.entries(encodeRounds(s))) tx.set(fs.doc(db, `${base}/sessions/${s.date}/rounds/${round}`), data);
     }); },
     async saveResult(date, id, r, revision) { requireWrite(); if (!validResult(r)) throw new Error('점수를 확인해 주세요.'); await fs.runTransaction(db, async tx => {
       const ref = fs.doc(db, `${base}/matchResults/${date}_${id}`);
