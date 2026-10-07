@@ -2,6 +2,7 @@ import { koreaToday, quarter, validDate } from './model.js';
 import { withinPeriod, periodLabel, quarterBounds } from './periods.js';
 import { matchesName } from './search.js';
 import { personalMatchups } from './matchups.js';
+import { rankingWithHistory } from './history-stats.js';
 
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const formatStats = row => `${row.wins}승 ${row.draws}무 ${row.losses}패`;
@@ -27,7 +28,7 @@ export function mountPersonalView({ element, players, getRecords, getSessions, i
     ...history.filter(set => set.kind === 'individual-aggregate').flatMap(set => set.rows.filter(row => row.playerId?.startsWith('past-')).map(row => [row.playerId, row.name])),
   ]);
   const renderArchive = () => {
-    const sets = history.filter(set => ['individual-aggregate', 'partner-aggregate', 'daily-individual-aggregate'].includes(set.kind));
+    const sets = history.filter(set => ['individual-aggregate', 'partner-aggregate', 'daily-individual-aggregate'].includes(set.kind)).sort((a, b) => Number(a.status === 'superseded') - Number(b.status === 'superseded') || Number(!a.id.startsWith('career-')) - Number(!b.id.startsWith('career-')) || (b.cutoff || '').localeCompare(a.cutoff || ''));
     if (!sets.some(set => set.id === datasetId)) datasetId = sets[0]?.id || '';
     $('#archive-set').innerHTML = sets.map(set => `<option value="${esc(set.id)}">${esc(set.title)}</option>`).join('') || '<option>기록 없음</option>';
     $('#archive-set').value = datasetId; $('#archive-set').disabled = !sets.length;
@@ -58,8 +59,9 @@ export function mountPersonalView({ element, players, getRecords, getSessions, i
     const nameMap = allNames();
     $('#personal-player').innerHTML = `<optgroup label="클럽 멤버">${players.map(player => `<option value="${player.id}">${esc(player.name)}</option>`).join('')}</optgroup>${Object.entries(nameMap).some(([id]) => id.startsWith('past-')) ? `<optgroup label="이전 멤버">${Object.entries(nameMap).filter(([id]) => id.startsWith('past-')).sort((a, b) => a[1].localeCompare(b[1], 'ko')).map(([id, name]) => `<option value="${id}">${esc(name)}</option>`).join('')}</optgroup>` : ''}`;
     $('#personal-player').value = selected;
-    const years = [...new Set([koreaToday().slice(0, 4), ...Object.keys(getSessions()).map(date => date.slice(0, 4))])].sort().reverse();
-    $('#personal-period').innerHTML = `<option value="all">전체 경기</option><option value="custom">기간 직접 선택</option>${years.map(year => `<optgroup label="${year}년">${[4, 3, 2, 1].map(q => `<option value="${year}-Q${q}">${periodLabel(`${year}-Q${q}`)}</option>`).join('')}${[2, 1].map(h => `<option value="${year}-H${h}">${periodLabel(`${year}-H${h}`)}</option>`).join('')}</optgroup>`).join('')}<optgroup label="모임별">${Object.keys(getSessions()).sort().reverse().map(date => `<option value="${date}">${date}</option>`).join('')}</optgroup>`;
+    const dates = [...new Set([...Object.keys(getSessions()), ...history.filter(set => set.kind === 'daily-individual-aggregate' && set.status !== 'superseded' && set.datePrecision === 'day').map(set => set.cutoff)])].sort().reverse();
+    const years = [...new Set([koreaToday().slice(0, 4), ...dates.map(date => date.slice(0, 4))])].sort().reverse();
+    $('#personal-period').innerHTML = `<option value="all">전체 경기</option><option value="custom">기간 직접 선택</option>${years.map(year => `<optgroup label="${year}년">${[4, 3, 2, 1].map(q => `<option value="${year}-Q${q}">${periodLabel(`${year}-Q${q}`)}</option>`).join('')}${[2, 1].map(h => `<option value="${year}-H${h}">${periodLabel(`${year}-H${h}`)}</option>`).join('')}</optgroup>`).join('')}<optgroup label="모임별">${dates.map(date => `<option value="${date}">${date}</option>`).join('')}</optgroup>`;
     $('#personal-period').value = period; $('#personal-period').disabled = mode === 'archive';
     $('#personal-period').closest('label').hidden = mode === 'archive';
     element.querySelector('.personal-controls').classList.toggle('archive-mode', mode === 'archive');
@@ -72,9 +74,9 @@ export function mountPersonalView({ element, players, getRecords, getSessions, i
     if (mode === 'archive') { renderArchive(); return; }
     if (!isReady()) { $('#personal-summary').innerHTML = ''; $('#personal-groups').innerHTML = '<div class="empty compact"><h3>공유 경기 기록을 기다리고 있습니다.</h3></div>'; $('#personal-details').innerHTML = ''; $('#personal-note').textContent = '연결 상태를 확인해 주세요.'; return; }
     const rows = personalMatchups(getRecords().filter(record => withinPeriod(currentPeriod(), record.date)), selected, nameMap);
-    const total = rows.total;
+    const total = rankingWithHistory(getRecords(), Object.entries(nameMap).map(([id, name]) => ({ id, name })), currentPeriod(), history).find(row => row.id === selected) || rows.total;
     $('#personal-summary').innerHTML = [['경기 수', `${total.games}경기`], ['승·무·패', `${total.wins} · ${total.draws} · ${total.losses}`], ['승률', total.winRate === null ? '—' : `${total.winRate}%`]].map(([label, value]) => `<div><span>${label}</span><strong>${value}</strong></div>`).join('');
-    $('#personal-note').textContent = `${periodLabel(currentPeriod())} · 실제 경기 기록 ${total.games}건. ${mode === 'partners' ? '파트너 이름을 누르면 함께 뛴 경기를 확인합니다.' : '상대 페어를 누르면 맞붙은 경기를 확인합니다.'}`;
+    $('#personal-note').textContent = `${periodLabel(currentPeriod())} · 실제 경기 ${rows.total.games}건${total.historyGames ? ` · 이전 개인 집계 ${total.historyGames}경기 포함. 파트너·상대 페어는 실제 대진이 있는 경기로 조회합니다.` : '.'} ${mode === 'partners' ? '파트너 이름을 누르면 함께 뛴 경기를 확인합니다.' : '상대 페어를 누르면 맞붙은 경기를 확인합니다.'}`;
     const groups = rows[mode].filter(row => row.names.some(name => matchesName(name, query)));
     $('#personal-groups').innerHTML = groups.map(row => `<button class="relation-card ${selectedKey === row.key ? 'selected' : ''}" data-relation-key="${esc(row.key)}" aria-pressed="${selectedKey === row.key}"><span class="relation-heading"><strong>${row.names.map(esc).join(' · ')}</strong><small>${row.games}경기${row.guest ? ' · 게스트 포함' : ''}</small></span><span class="relation-score">${formatStats(row)}<strong>${row.winRate}%</strong></span><span class="relation-goals">득 ${row.scored} / 실 ${row.conceded} · 득실차 ${row.difference > 0 ? '+' : ''}${row.difference}<span>경기 보기 →</span></span></button>`).join('') || '<div class="empty compact"><h3>해당 경기 기록이 없습니다.</h3><p>멤버·조회 기간·이름 검색을 바꿔 주세요.</p></div>';
     const chosen = groups.find(row => row.key === selectedKey);
@@ -111,6 +113,7 @@ export function mountPersonalView({ element, players, getRecords, getSessions, i
   return {
     render,
     selectPlayer(id, value) { selected = id; if (typeof value === 'object') { period = 'custom'; start = value.start; end = value.end; $('#personal-start').value = start; $('#personal-end').value = end; } else period = value; mode = 'partners'; query = ''; selectedKey = ''; $('#personal-search').value = ''; render(); },
+    selectArchive(id, value) { selected = id; datasetId = value; mode = 'archive'; query = ''; selectedKey = ''; $('#personal-search').value = ''; render(); },
     setHistory(sets) { history = sets; render(); },
     setHistoryStatus(text) { historyStatus = text; render(); },
   };

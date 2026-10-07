@@ -15,7 +15,7 @@ test('Firestore public entry contract', { skip: !process.env.FIRESTORE_EMULATOR_
     const db = env.unauthenticatedContext().firestore(), base = 'clubs/gdr';
     const ids = periods.find(period => period.id === '2026-Q4').memberIds, lockedPairs = [[ids[0], ids[1]]];
     const generated = generateSchedule(ids, allocateForWindow(ids, 4, lockedPairs), { attempts: 40, lockedPairs });
-    const session = { schemaVersion: 1, date: '2026-10-07', participantIds: ids, fixedPlayerIds: ids, matchMap: generated.matchMap, partnerRepeats: generated.partnerRepeats, lockedPairs, startTime: '19:00', endTime: '21:00', roundMinutes: 30, createdAt: serverTimestamp() };
+    const session = { schemaVersion: 1, date: '2026-10-07', generation: 'e'.repeat(32), participantIds: ids, fixedPlayerIds: ids, matchMap: generated.matchMap, partnerRepeats: generated.partnerRepeats, lockedPairs, startTime: '19:00', endTime: '21:00', roundMinutes: 30, createdAt: serverTimestamp() };
     const scheduleRef = doc(db, base + '/sessions/' + session.date);
     const save = source => {
       const batch = writeBatch(db);
@@ -92,7 +92,7 @@ test('Firestore public entry contract', { skip: !process.env.FIRESTORE_EMULATOR_
       const restored = await load(guestSession.date);
       assert.deepEqual(restored.guests, guestSession.guests);
       validateSession(restored, ids);
-      await assertSucceeds(setDoc(doc(db, base + '/matchResults/2026-12-06_r1-c1'), { date: '2026-12-06', matchId: 'r1-c1', scoreA: 6, scoreB: 4, outcome: 'teamA', revision: 1, updatedAt: serverTimestamp() }));
+      await assertSucceeds(setDoc(doc(db, base + '/matchResults/2026-12-06_r1-c1'), { date: '2026-12-06', generation: session.generation, matchId: 'r1-c1', scoreA: 6, scoreB: 4, outcome: 'teamA', revision: 1, updatedAt: serverTimestamp() }));
       const badDate = '2026-12-13';
       for (const guests of [{}, { guest001: { name: '' } }, { guest001: { name: ' ' } }, { guest001: { name: '가'.repeat(13) } }, { guest001: { name: '홍길동', rating: 1 } }, { gdr001: { name: '김민종' } }, { guest009: { name: '홍길동' } }]) await assertFails(save({ ...guestSession, date: badDate, guests }));
       await assertFails(save({ ...guestSession, date: badDate, fixedPlayerIds: participants }));
@@ -101,7 +101,7 @@ test('Firestore public entry contract', { skip: !process.env.FIRESTORE_EMULATOR_
       const all = [...ids, ...Object.keys(profiles)], full = generateSchedule(all, allocateForWindow(all, 6), { attempts: 20 });
       await assertSucceeds(save({ ...session, date: '2026-12-20', participantIds: all, fixedPlayerIds: ids, guests: profiles, lockedPairs: [], endTime: '22:00', matchMap: full.matchMap, partnerRepeats: full.partnerRepeats }));
     });
-    const result = { date: '2026-10-07', matchId: 'r1-c1', scoreA: 6, scoreB: 4, outcome: 'teamA', revision: 1, updatedAt: serverTimestamp() };
+    const result = { date: '2026-10-07', generation: session.generation, matchId: 'r1-c1', scoreA: 6, scoreB: 4, outcome: 'teamA', revision: 1, updatedAt: serverTimestamp() };
     await t.test('score validation and valid anonymous creation', async () => {
       await assertFails(setDoc(resultRef, { ...result, scoreA: -1 }));
       await assertFails(setDoc(resultRef, { ...result, outcome: 'teamB' }));
@@ -120,10 +120,65 @@ test('Firestore public entry contract', { skip: !process.env.FIRESTORE_EMULATOR_
     });
     await t.test('existing version-one schedules remain readable and scores stay editable', async () => {
       const legacy = { ...session, date: '2026-10-04', lockedPairs: encodeSession(session).lockedPairs };
+      delete legacy.generation;
       await env.withSecurityRulesDisabled(async context => { await setDoc(doc(context.firestore(), base + '/sessions/' + legacy.date), legacy); });
       const restored = decodeSession((await getDoc(doc(db, base + '/sessions/' + legacy.date))).data());
       validateSession(restored, ids);
-      await assertSucceeds(setDoc(doc(db, base + '/matchResults/' + legacy.date + '_r1-c1'), { ...result, date: legacy.date }));
+      const legacyResult = { ...result, date: legacy.date }; delete legacyResult.generation;
+      await assertSucceeds(setDoc(doc(db, base + '/matchResults/' + legacy.date + '_r1-c1'), legacyResult));
+    });
+    const cancel = async (source, confirmation = `${source.date} 대진 취소`, generation = source.generation || 'legacy') => {
+      const batch = writeBatch(db);
+      batch.set(doc(db, `${base}/sessionCancellations/${source.date}--${generation}`), { date: source.date, generation, confirmation, cancelledAt: serverTimestamp() });
+      for (const id of Object.keys(source.matchMap)) {
+        const ref = doc(db, `${base}/matchResults/${source.date}_${id}`);
+        if ((await getDoc(ref)).exists()) batch.delete(ref);
+      }
+      if (source.schemaVersion !== 0) for (const round of Object.keys(encodeRounds(source))) batch.delete(doc(db, `${base}/sessions/${source.date}/rounds/${round}`));
+      batch.delete(doc(db, `${base}/sessions/${source.date}`));
+      return batch.commit();
+    };
+    await t.test('exact confirmation gates atomic cancellation; no standalone receipt or partial deletes', async () => {
+      const four = ids.slice(0, 4), generated = generateSchedule(four, allocateForWindow(four, 2), { attempts: 10 });
+      const source = { ...session, date: '2026-12-27', generation: 'a'.repeat(32), participantIds: four, fixedPlayerIds: four, lockedPairs: [], matchMap: generated.matchMap, partnerRepeats: generated.partnerRepeats };
+      await assertSucceeds(save(source));
+      const score = { ...result, date: source.date, generation: source.generation };
+      const ref = doc(db, `${base}/matchResults/${source.date}_r1-c1`), header = doc(db, `${base}/sessions/${source.date}`);
+      await assertSucceeds(setDoc(ref, score));
+      await assertFails(deleteDoc(header)); await assertFails(deleteDoc(ref));
+      await assertFails(setDoc(doc(db, `${base}/sessionCancellations/${source.date}--${source.generation}`), { date: source.date, generation: source.generation, confirmation: `${source.date} 대진 취소`, cancelledAt: serverTimestamp() }));
+      await assertFails(cancel(source, '대진 취소'));
+      await assertFails(cancel(source, `${source.date} 대진 취소 `));
+      await assertFails(cancel(source, `${source.date} 대진 취소`, 'b'.repeat(32)));
+      assert.equal((await getDoc(header)).exists(), true); assert.equal((await getDoc(ref)).exists(), true);
+      await assertSucceeds(cancel(source));
+      assert.equal((await getDoc(header)).exists(), false); assert.equal((await getDoc(ref)).exists(), false);
+      assert.equal((await getDocs(collection(db, `${base}/sessions/${source.date}/rounds`))).size, 0);
+      await assertFails(setDoc(ref, score));
+      await assertFails(save(source));
+      const recreated = { ...source, generation: 'b'.repeat(32) };
+      await assertSucceeds(save(recreated));
+      await assertFails(setDoc(ref, score));
+      const missingGeneration = { ...score }; delete missingGeneration.generation;
+      await assertFails(setDoc(ref, missingGeneration));
+      await assertSucceeds(setDoc(ref, { ...score, generation: recreated.generation }));
+      await assertFails(cancel(source));
+      assert.equal((await getDoc(header)).data().generation, recreated.generation);
+      await assertSucceeds(cancel(recreated));
+    });
+    await t.test('largest supported cancellation stays atomic and within rule access limits', async () => {
+      const source = await load('2026-11-15');
+      for (const matchId of Object.keys(source.matchMap)) await assertSucceeds(setDoc(doc(db, `${base}/matchResults/${source.date}_${matchId}`), { ...result, date: source.date, matchId, generation: source.generation }));
+      await assertSucceeds(cancel(source));
+      assert.equal((await getDocs(collection(db, `${base}/sessions/${source.date}/rounds`))).size, 0);
+      assert.equal((await getDoc(doc(db, `${base}/sessions/${source.date}`))).exists(), false);
+    });
+    await t.test('legacy schedule cancellation is supported; recreated date requires fresh generation', async () => {
+      const legacy = await load('2026-10-04');
+      await assertSucceeds(cancel({ ...legacy, schemaVersion: 0 }));
+      await assertSucceeds(save({ ...session, date: legacy.date, generation: 'c'.repeat(32) }));
+      const stale = { ...result, date: legacy.date }; delete stale.generation;
+      await assertFails(setDoc(doc(db, `${base}/matchResults/${legacy.date}_r1-c1`), stale));
     });
   } finally { await env.cleanup(); }
 });

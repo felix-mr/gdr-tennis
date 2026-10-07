@@ -1,4 +1,5 @@
 import { validateGuests } from './guests.js';
+import { resultFor } from './session-lifecycle.js';
 
 export function koreaToday() {
   const parts = new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Seoul', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date());
@@ -22,7 +23,7 @@ export function validResult(result) { return result && validScore(result.scoreA)
 export function quarter(date) { return `${date.slice(0, 4)}-Q${Math.ceil(Number(date.slice(5, 7)) / 3)}`; }
 export function recordsFrom(state) {
   return Object.values(state.sessions).flatMap(session => Object.entries(session.matchMap).flatMap(([id, match]) => {
-    const result = state.results[`${session.date}_${id}`];
+    const result = resultFor(state, session, id);
     return validResult(result) ? [{ ...match, ...result, date: session.date, fixedPlayerIds: session.fixedPlayerIds, guests: session.guests || {} }] : [];
   }));
 }
@@ -41,7 +42,10 @@ export function ranking(records, players) {
       else row.losses++;
     }
   }
-  const sorted = [...rows.values()].sort((a, b) => b.points - a.points || Number(b.games > 0) - Number(a.games > 0) || (b.scored - b.conceded) - (a.scored - a.conceded) || a.name.localeCompare(b.name, 'ko'));
+  return rankStats([...rows.values()]);
+}
+export function rankStats(rows) {
+  const sorted = [...rows].sort((a, b) => b.points - a.points || Number(b.games > 0) - Number(a.games > 0) || (b.scored - b.conceded) - (a.scored - a.conceded) || a.name.localeCompare(b.name, 'ko'));
   let previous = null, rank = null;
   return sorted.map((r, i) => {
     if (r.games && r.points !== previous) rank = i + 1;
@@ -50,6 +54,7 @@ export function ranking(records, players) {
   });
 }
 export function validateSession(s, knownIds) {
+  if (s?.generation !== undefined && (typeof s.generation !== 'string' || !/^[a-f0-9]{32}$/.test(s.generation))) throw new Error('대진 버전을 확인해 주세요.');
   const guests = validateGuests(s?.guests || {});
   const guestIds = Object.keys(guests), allowedIds = [...knownIds, ...guestIds];
   if (!s || !validDate(s.date) || !Array.isArray(s.participantIds) || s.participantIds.length < 4 || new Set(s.participantIds).size !== s.participantIds.length || s.participantIds.some(id => !allowedIds.includes(id)) || guestIds.some(id => knownIds.includes(id) || !s.participantIds.includes(id)) || !Array.isArray(s.fixedPlayerIds) || new Set(s.fixedPlayerIds).size !== s.fixedPlayerIds.length || s.fixedPlayerIds.some(id => !s.participantIds.includes(id) || guestIds.includes(id)) || !s.matchMap || !Object.keys(s.matchMap).length || !/^\d{2}:\d{2}$/.test(s.startTime) || !Number.isInteger(s.roundMinutes) || s.roundMinutes < 10 || s.roundMinutes > 120) throw new Error('대진표 형식이 올바르지 않습니다.');

@@ -1,9 +1,10 @@
+import { resultFor } from './session-lifecycle.js';
 import { validResult } from './model.js';
 import { sessionNames } from './guests.js';
 
 const ROUNDS_PER_IMAGE = 8;
 const FONT = '"Noto Sans KR", system-ui, sans-serif';
-const COLORS = { green: '#193e34', lime: '#d6f269', paper: '#f7f8f2', text: '#24392f', muted: '#77837a', line: '#e0e5da' };
+const COLORS = { green: '#672883', lime: '#dcea56', paper: '#faf8fc', text: '#34213f', muted: '#77837a', line: '#e7ddec' };
 
 const clock = minutes => `${String(Math.floor(minutes / 60) % 24).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`;
 export function scheduleImagePages(session, names, results = {}, saved = false) {
@@ -20,7 +21,7 @@ export function scheduleImagePages(session, names, results = {}, saved = false) 
       number: round, start: clock(start), end: clock(start + session.roundMinutes),
       rests: members.filter(member => !active.has(member.id)).map(member => member.name),
       matches: matches.map(([id, match]) => {
-        const result = results[`${session.date}_${id}`];
+        const result = resultFor({ results }, session, id);
         return { id, court: match.court, teamA: match.teamA.map(id => names[id]), teamB: match.teamB.map(id => names[id]), score: saved && validResult(result) ? [result.scoreA, result.scoreB] : null };
       }),
     };

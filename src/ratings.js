@@ -1,5 +1,6 @@
 import { quarter, validDate, validResult } from './model.js';
 import { GUEST_STRENGTH, validateGuests } from './guests.js';
+import { historicalPriors } from './history-stats.js';
 
 const clamp = value => Math.max(0, Math.min(1, value));
 
@@ -20,9 +21,9 @@ export function initialStrengths(ids, baseline = {}) {
 // Shrink opponent-adjusted results toward the supplied prior. Attendance affects
 // confidence, not a player's performance score. A quadratic ramp keeps the
 // supplied prior dominant early, with equal weights after 24 recorded games.
-export function strengthsForSession(records, ids, baseline, date) {
+export function strengthsForSession(records, ids, baseline, date, history = []) {
   if (!validDate(date)) throw new Error('모임 날짜를 확인해 주세요.');
-  const priors = initialStrengths(ids, baseline);
+  const priors = historicalPriors(initialStrengths(ids, baseline), history, date);
   const priorGames = baseline.priorGames ?? 24;
   if (!Number.isFinite(priorGames) || priorGames <= 0) throw new Error('대진 초기 설정을 확인해 주세요.');
   const observations = Object.fromEntries(ids.map(id => [id, { games: 0, residual: 0 }]));

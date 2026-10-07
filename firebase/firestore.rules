@@ -23,8 +23,11 @@ service cloud.firestore {
       let d = request.resource.data;
       let window = (minutes(d.endTime) - minutes(d.startTime)) / 30;
       let guests = d.get('guests', {});
-      return d.keys().hasAll(['schemaVersion', 'date', 'participantIds', 'fixedPlayerIds', 'startTime', 'endTime', 'roundMinutes', 'partnerRepeats', 'lockedPairs', 'roundCount', 'matchCount', 'createdAt'])
-        && d.keys().hasOnly(['schemaVersion', 'date', 'participantIds', 'fixedPlayerIds', 'guests', 'startTime', 'endTime', 'roundMinutes', 'partnerRepeats', 'lockedPairs', 'roundCount', 'matchCount', 'createdAt'])
+      let generation = d.get('generation', 'legacy');
+      return d.keys().hasAll(['schemaVersion', 'date', 'participantIds', 'fixedPlayerIds', 'startTime', 'endTime', 'roundMinutes', 'partnerRepeats', 'lockedPairs', 'roundCount', 'matchCount', 'createdAt', 'generation'])
+        && d.keys().hasOnly(['schemaVersion', 'date', 'participantIds', 'fixedPlayerIds', 'guests', 'startTime', 'endTime', 'roundMinutes', 'partnerRepeats', 'lockedPairs', 'roundCount', 'matchCount', 'createdAt', 'generation'])
+        && generation.matches('^[a-f0-9]{32}$')
+        && !exists(/databases/$(database)/documents/clubs/gdr/sessionCancellations/$(date + '--' + generation))
         && d.schemaVersion == 2 && d.date == date
         && date.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
         && d.participantIds is list && d.participantIds.size() >= 4 && d.participantIds.size() <= 22
@@ -63,12 +66,39 @@ service cloud.firestore {
     match /clubs/gdr/sessions/{date} {
       allow read: if true;
       allow create: if validHeader(date);
-      allow update, delete: if false;
+      allow update: if false;
+      allow delete: if cancelling(date);
       match /rounds/{roundId} {
         allow read: if true;
         allow create: if validRound(date, roundId);
-        allow update, delete: if false;
+        allow update: if false;
+        allow delete: if cancelling(date);
       }
+    }
+    function cancelling(date) {
+      let header = get(/databases/$(database)/documents/clubs/gdr/sessions/$(date)).data;
+      let generation = header.get('generation', 'legacy');
+      let receipt = /databases/$(database)/documents/clubs/gdr/sessionCancellations/$(date + '--' + generation);
+      return !existsAfter(/databases/$(database)/documents/clubs/gdr/sessions/$(date))
+        && !exists(receipt) && existsAfter(receipt)
+        && getAfter(receipt).data.confirmation == date + ' 대진 취소'
+        && getAfter(receipt).data.cancelledAt == request.time;
+    }
+    match /clubs/gdr/sessionCancellations/{cancellationId} {
+      function validCancellation() {
+        let d = request.resource.data;
+        let header = get(/databases/$(database)/documents/clubs/gdr/sessions/$(d.date)).data;
+        return d.keys().hasAll(['date', 'generation', 'confirmation', 'cancelledAt'])
+          && d.keys().hasOnly(['date', 'generation', 'confirmation', 'cancelledAt'])
+          && cancellationId == d.date + '--' + d.generation
+          && d.generation == header.get('generation', 'legacy')
+          && d.confirmation == d.date + ' 대진 취소'
+          && d.cancelledAt == request.time
+          && !existsAfter(/databases/$(database)/documents/clubs/gdr/sessions/$(d.date));
+      }
+      allow read: if true;
+      allow create: if validCancellation();
+      allow update, delete: if false;
     }
     function savedMatches(date, matchId) {
       let s = get(/databases/$(database)/documents/clubs/gdr/sessions/$(date)).data;
@@ -80,8 +110,11 @@ service cloud.firestore {
     match /clubs/gdr/matchResults/{resultId} {
       function validResult() {
         let d = request.resource.data;
+        let s = get(/databases/$(database)/documents/clubs/gdr/sessions/$(d.date)).data;
         return d.keys().hasAll(['date', 'matchId', 'scoreA', 'scoreB', 'outcome', 'revision', 'updatedAt'])
-          && d.keys().hasOnly(['date', 'matchId', 'scoreA', 'scoreB', 'outcome', 'revision', 'updatedAt'])
+          && d.keys().hasOnly(['date', 'matchId', 'scoreA', 'scoreB', 'outcome', 'revision', 'updatedAt', 'generation'])
+          && d.get('generation', 'legacy') == s.get('generation', 'legacy')
+          && existsAfter(/databases/$(database)/documents/clubs/gdr/sessions/$(d.date))
           && resultId == d.date + '_' + d.matchId && d.matchId in savedMatches(d.date, d.matchId)
           && d.scoreA is int && d.scoreA >= 0 && d.scoreA <= 99
           && d.scoreB is int && d.scoreB >= 0 && d.scoreB <= 99
@@ -92,8 +125,9 @@ service cloud.firestore {
       allow create: if validResult() && request.resource.data.revision == 1;
       allow update: if validResult()
         && request.resource.data.date == resource.data.date && request.resource.data.matchId == resource.data.matchId
+        && request.resource.data.get('generation', 'legacy') == resource.data.get('generation', 'legacy')
         && request.resource.data.revision == resource.data.revision + 1;
-      allow delete: if false;
+      allow delete: if cancelling(resource.data.date);
     }
     // Historical snapshots are imported by the project administrator only.
     // Members may view them; client writes cannot alter the source archive.
