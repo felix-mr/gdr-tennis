@@ -19,6 +19,10 @@ try { const pairs = JSON.parse(localStorage.getItem('gdr-prep-pairs') || '[]'); 
 let tab = 'schedule', selected = new Set(players.map(p => p.id)), date = nextSunday(koreaToday()), filter = quarter(koreaToday()), playerFilter = '', dirty = new Map();
 const roundMinutes = 30;
 let startTime = '19:00', endTime = '21:00';
+const timeOptions = selectedTime => Array.from({ length: 48 }, (_, i) => {
+  const time = `${String(Math.floor(i / 2)).padStart(2, '0')}:${i % 2 ? '30' : '00'}`;
+  return `<option value="${time}" ${selectedTime === time ? 'selected' : ''}>${time}</option>`;
+}).join('');
 let status = firebaseConfigured ? '공유 기록 연결 중…' : '로컬 기록 불러오는 중…';
 const initialQuarter = quarter(koreaToday());
 $('#app').innerHTML = `
@@ -29,7 +33,7 @@ $('#app').innerHTML = `
 <section id="schedule-view">
 <div class="section-heading"><div><h2>오늘의 대진</h2><p>참석자를 고르고, 두 코트에 공평하게.</p></div><label class="date-control">모임 날짜<input id="date" type="date" value="${date}" required></label></div>
 <div class="builder" id="builder"><div class="panel-top"><h3>참석 멤버 <span id="selected-count"></span></h3><button id="select-all" class="text-button">전체 해제</button></div><div class="player-grid" id="attendees"></div>
-<div class="session-settings"><div class="time-setting"><span class="setting-label">모임 시간</span><div class="time-range"><label><span>시작</span><input id="start" aria-label="모임 시작 시간" type="time" step="1800" value="${startTime}" required></label><span class="range-arrow">→</span><label><span>종료</span><input id="end" aria-label="모임 종료 시간" type="time" step="1800" value="${endTime}" required></label></div><p class="time-hint">날짜별 변경 가능 · 30분 단위 · 같은 날 기준</p></div><div class="court-info"><span class="court-icon" aria-hidden="true"></span><div><strong>2면</strong><span>복식 · 30분 고정</span></div></div></div>
+<div class="session-settings"><div class="time-setting"><span class="setting-label">모임 시간</span><div class="time-range"><label><span>시작</span><select id="start" aria-label="모임 시작 시간">${timeOptions(startTime)}</select></label><span class="range-arrow">→</span><label><span>종료</span><select id="end" aria-label="모임 종료 시간">${timeOptions(endTime)}</select></label></div><div class="time-presets" role="group" aria-label="자주 쓰는 모임 시간"><button data-meeting-time="19:00/21:00" aria-pressed="true">19:00–21:00</button><button data-meeting-time="19:00/22:00" aria-pressed="false">19:00–22:00</button></div><p class="time-hint">24시간 표기 · 30분 단위 · 같은 날 기준</p></div><div class="court-info"><span class="court-icon" aria-hidden="true"></span><div><strong>2면</strong><span>복식 · 30분 고정</span></div></div></div>
 <div class="builder-bottom"><p>그날 참석 인원·모임 시간에 맞춰 자동 배정.<br>1인 최소 2경기 · 경기 수 차이는 최대 1경기.</p><button id="generate" class="primary">대진 만들기 <span>↗</span></button></div></div>
 <button id="prep-shortcut" data-tab="prep" class="prep-shortcut">대회 준비 페어 설정 →</button><div id="schedule-content"></div></section>
 <section id="ranking-view" hidden><div class="section-heading"><div><h2>우리의 스코어보드</h2><p>승점은 쌓이고, 기록은 남고.</p></div><label class="period-control"><span>조회 기간</span><select id="period"></select></label></div><div id="ranking-summary" class="summary-grid"></div><div class="rank-panel"><div class="panel-top"><h3 id="ranking-title"></h3><button id="export-csv" class="text-button">CSV 내려받기 ↓</button></div><p class="table-scroll-hint">좌우로 넘겨 전체 기록을 확인하세요.</p><div class="table-scroll" role="region" aria-label="개인 순위표" tabindex="0"><table><caption class="sr-only">GDR 개인 순위</caption><thead><tr><th>순위</th><th>이름</th><th>승점</th><th>경기</th><th>승</th><th>무</th><th>패</th><th>승률</th><th>득</th><th>실</th><th>득실차</th></tr></thead><tbody id="rankings"></tbody></table></div><p class="table-note">승 3점 · 무 1점 · 패 0점 / 같은 승점은 공동순위 / 승률 = 승 ÷ 전체 경기</p></div><div class="section-heading history-head"><h3>경기 기록</h3><label class="sr-only" for="player-filter">선수</label><select id="player-filter"><option value="">전체 멤버</option>${players.map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join('')}</select></div><div id="history"></div></section>
@@ -99,7 +103,12 @@ function renderPrep() {
   $('#prep-pairs').innerHTML = lockedPairs.length ? lockedPairs.map((pair, index) => `<article class="prep-pair-card"><span class="prep-pair-number">${String(index + 1).padStart(2, '0')}</span><div><strong>${esc(names[pair[0]])}<span>·</span>${esc(names[pair[1]])}</strong><small>${pair.every(id => selected.has(id)) ? '이번 모임에 함께 참석' : '이번 모임에 한 명 이상 불참'}</small></div><button data-remove-prep="${index}" class="text-button" aria-label="${pair.map(id => esc(names[id])).join(' · ')} 페어 해제">해제</button></article>`).join('') : '<div class="prep-empty">등록된 페어가 없습니다.<br><span>위에서 두 멤버를 선택해 첫 페어를 만들어 주세요.</span></div>';
   $('#prep-shortcut').textContent = lockedPairs.length ? `대회 준비 페어 ${lockedPairs.length}조 · 설정 →` : '대회 준비 페어 설정 →';
 }
-function render() { updateConnection(); renderSchedule(); renderRanking(); renderPrep(); }
+function syncMeetingTimes() {
+  $('#start').value = startTime;
+  $('#end').value = endTime;
+  document.querySelectorAll('[data-meeting-time]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.meetingTime === `${startTime}/${endTime}`)));
+}
+function render() { updateConnection(); syncMeetingTimes(); renderSchedule(); renderRanking(); renderPrep(); }
 function switchTab(value) {
   const headingBottom = document.querySelector('.page-head').getBoundingClientRect().bottom;
   const tabsTop = window.scrollY + headingBottom;
@@ -126,6 +135,10 @@ $('#app').addEventListener('click', async event => {
   const button = event.target.closest('button'); if (!button) return;
   try {
     if (button.dataset.tab) switchTab(button.dataset.tab);
+    else if (button.dataset.meetingTime) {
+      [startTime, endTime] = button.dataset.meetingTime.split('/');
+      syncMeetingTimes(); draft = null; renderSchedule();
+    }
     else if (button.dataset.prepPlayer) {
       const id = button.dataset.prepPlayer;
       if (prepSelection.has(id)) prepSelection.delete(id); else if (prepSelection.size < 2) prepSelection.add(id);
@@ -160,8 +173,8 @@ $('#app').addEventListener('change', async event => {
     if (control) control.value = input.value;
   }
   else if (input.closest('#attendees')) { if (input.checked) selected.add(input.value); else selected.delete(input.value); draft = null; renderAttendees(); renderSchedule(); }
-  else if (input.id === 'date') { date = input.value; startTime = state.sessions[date]?.startTime || '19:00'; endTime = state.sessions[date]?.endTime || '21:00'; $('#start').value = startTime; $('#end').value = endTime; draft = null; dirty.clear(); renderSchedule(); }
-  else if (['start', 'end'].includes(input.id)) { startTime = $('#start').value; endTime = $('#end').value; draft = null; renderSchedule(); }
+  else if (input.id === 'date') { date = input.value; startTime = state.sessions[date]?.startTime || '19:00'; endTime = state.sessions[date]?.endTime || '21:00'; syncMeetingTimes(); draft = null; dirty.clear(); renderSchedule(); }
+  else if (['start', 'end'].includes(input.id)) { startTime = $('#start').value; endTime = $('#end').value; syncMeetingTimes(); draft = null; renderSchedule(); }
   else if (input.id === 'period') { filter = input.value; renderRanking(); }
   else if (input.id === 'player-filter') { playerFilter = input.value; renderRanking(); }
   else if (input.id === 'import' && input.files[0]) {
