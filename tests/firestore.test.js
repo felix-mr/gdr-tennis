@@ -24,6 +24,18 @@ test('Firestore public entry contract', { skip: !process.env.FIRESTORE_EMULATOR_
       return batch.commit();
     };
     const load = async date => decodeSession((await getDoc(doc(db, base + '/sessions/' + date))).data(), (await getDocs(collection(db, base + '/sessions/' + date + '/rounds'))).docs.map(doc => doc.data()));
+    await t.test('administrator archives are readable but anonymous creation, edits and deletion are denied', async () => {
+      const archive = { schemaVersion: 1, title: 'Historical snapshot', rows: [{ name: '김민종', stats: { wins: 1 } }] };
+      for (const name of ['historySets', 'historySources', 'historyImports']) {
+        const ref = doc(db, `${base}/${name}/verified`);
+        await assertSucceeds(getDocs(collection(db, `${base}/${name}`)));
+        await assertFails(setDoc(ref, archive));
+        await env.withSecurityRulesDisabled(async context => { await setDoc(doc(context.firestore(), `${base}/${name}/verified`), archive); });
+        assert.equal((await assertSucceeds(getDoc(ref))).data().title, archive.title);
+        await assertFails(updateDoc(ref, { title: 'Changed' }));
+        await assertFails(deleteDoc(ref));
+      }
+    });
     await t.test('anonymous list, atomic header/round storage and verified reconstruction', async () => {
       await assertSucceeds(getDocs(collection(db, base + '/sessions')));
       await assertSucceeds(getDocs(collection(db, base + '/matchResults')));

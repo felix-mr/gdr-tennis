@@ -13,6 +13,8 @@ import { GUEST_IDS, GUEST_STRENGTH, normalizeGuestName, validateGuests, sessionN
 import { withinPeriod, periodLabel, quarterBounds } from './periods.js';
 import { openRecordImages } from './record-image.js';
 import { matchesPlayer, matchesRecord } from './search.js';
+import { mountPersonalView } from './personal-view.js';
+import { readHistory } from './history-store.js';
 const courtName = court => court === 1 ? '안쪽' : '바깥쪽';
 const $ = selector => document.querySelector(selector);
 const names = Object.fromEntries(players.map(p => [p.id, p.name]));
@@ -36,7 +38,7 @@ let status = firebaseConfigured ? '공유 기록 연결 중…' : '로컬 기록
 const initialQuarter = quarter(koreaToday());
 $('#app').innerHTML = `
 <header><a class="brand" href="#" aria-label="GDR 홈"><span class="brand-mark">G<span class="ball"></span></span><span>GDR <small>TENNIS CLUB</small></span></a><span class="season">${initialQuarter.replace('-Q', ' · Q')}</span></header>
-<main><nav class="tabs" aria-label="화면 선택"><button data-tab="schedule" aria-selected="true">대진표</button><button data-tab="ranking" aria-selected="false">순위 · 기록</button><button data-tab="prep" aria-selected="false">대회 준비</button><button data-tab="members" aria-selected="false">멤버</button></nav>
+<main><nav class="tabs" aria-label="화면 선택"><button data-tab="schedule" aria-selected="true">대진표</button><button data-tab="ranking" aria-selected="false">순위 · 기록</button><button data-tab="personal" aria-selected="false">개인 기록</button><button data-tab="prep" aria-selected="false">대회 준비</button><button data-tab="members" aria-selected="false">멤버</button></nav>
 <div class="page-head"><div><p class="eyebrow">OUR COURT, OUR GAME</p><h1>함께 치고,<br class="mobile-only"> 기록은 차곡차곡.</h1><p class="subtitle">매주 일요일 · 기본 19:00–21:00 · 두 코트에서 함께.</p></div><div class="club-stamp"><strong>${players.length}</strong><span>전체 멤버 · 복식</span></div></div>
 <div class="connection"><span class="status-dot"></span><span id="connection-status" role="status"></span></div>
 <section id="schedule-view">
@@ -47,9 +49,11 @@ $('#app').innerHTML = `
 <div class="builder-bottom"><p>그날 참석 인원·모임 시간에 맞춰 자동 배정.<br>1인 최소 2경기 · 경기 수 차이는 최대 1경기.</p><button id="generate" class="primary">대진 만들기 <span>↗</span></button></div></div>
 <button id="prep-shortcut" data-tab="prep" class="prep-shortcut">대회 준비 페어 설정 →</button><div id="schedule-content"></div></section>
 <section id="ranking-view" hidden><div class="section-heading"><div><h2>우리의 스코어보드</h2><p>승점은 쌓이고, 기록은 남고.</p></div><label class="period-control"><span>조회 기간</span><select id="period"></select></label></div><div class="record-filters"><div id="custom-range" class="custom-range" hidden><label>시작일<input id="range-start" type="date" value="${rangeStart}"></label><label>종료일<input id="range-end" type="date" value="${rangeEnd}"></label><button id="apply-range" class="secondary">기간 적용</button><p id="range-error" role="alert"></p></div><div class="record-search"><label class="sr-only" for="record-search">회원·게스트 이름 검색</label><input id="record-search" type="search" placeholder="회원·게스트 이름 검색" autocomplete="off"><button id="clear-record-search" class="text-button" aria-label="이름 검색 지우기" hidden>지우기</button></div><p id="search-results" role="status"></p></div><div id="ranking-summary" class="summary-grid"></div><div class="rank-panel"><div class="panel-top"><h3 id="ranking-title"></h3><button id="export-csv" class="text-button">CSV 내려받기 ↓</button></div><p class="table-scroll-hint">좌우로 넘겨 전체 기록을 확인하세요.</p><div class="table-scroll" role="region" aria-label="개인 순위표" tabindex="0"><table><caption class="sr-only">GDR 개인 순위</caption><thead><tr><th>순위</th><th>이름</th><th>승점</th><th>경기</th><th>승</th><th>무</th><th>패</th><th>승률</th><th>득</th><th>실</th><th>득실차</th></tr></thead><tbody id="rankings"></tbody></table></div><p class="table-note">승 3점 · 무 1점 · 패 0점 / 같은 승점은 공동순위 / 승률 = 승 ÷ 전체 경기</p></div><div class="record-image-tools"><div><h3>기록 이미지 2장</h3><p>당일 결과와 선택한 날까지의 전체 회원 순위를 함께 보관하세요.</p></div><div class="record-image-controls"><label><span>당일 결과 날짜</span><select id="stats-date"></select></label><button id="export-record-images" class="secondary" disabled>두 장 저장·공유</button></div></div><div class="section-heading history-head"><h3>경기 기록</h3><label class="sr-only" for="player-filter">선수</label><select id="player-filter"><option value="">전체 멤버</option>${players.map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join('')}</select></div><div id="history"></div></section>
+<section id="personal-view" hidden></section>
 <section id="prep-view" hidden><div class="section-heading"><div><h2>같이 나갈 우리 조</h2><p>대회를 준비하는 두 멤버를 페어로 등록해 주세요.</p></div></div><div class="prep-editor"><div class="panel-top"><h3>멤버 두 명 선택</h3><span id="prep-selection-count">0 / 2</span></div><div id="prep-candidates" class="prep-candidates"></div><div class="prep-selection-footer"><p id="prep-selection-label">함께할 두 멤버를 선택해 주세요.</p><button id="add-prep-pair" class="primary" disabled>페어 등록</button></div></div><div class="section-heading prep-list-heading"><h3>등록된 페어 <span id="prep-pair-count">0조</span></h3><p>함께 참석하면 같은 팀으로 출전합니다.</p></div><div id="prep-pairs" class="prep-pairs"></div><p class="prep-footnote">한 멤버는 한 페어에 등록 가능. 한 명이 불참하면 해당 모임에는 적용하지 않습니다.</p></section>
 <section id="members-view" hidden><div class="section-heading"><div><h2>우리 클럽 멤버</h2><p id="member-summary"></p></div><label class="period-control"><span>멤버 보기</span><select id="member-period"><option value="all">전체 멤버 ${players.length}명</option>${periods.map(period => `<option value="${period.id}">${period.label} ${period.memberIds.length}명</option>`).join('')}</select></label></div><div class="gender-legend"><span><i class="male-dot"></i>남성</span><span><i class="female-dot"></i>여성</span></div><div class="member-grid" id="member-grid"></div><div class="backup-panel"><div><h3>기록 보관</h3><p>로컬 기록은 이 브라우저에 저장됩니다. 백업 파일로 보관해 주세요.</p></div><div class="backup-actions"><button id="backup" class="secondary">백업 내려받기</button>${!firebaseConfigured ? '<label class="secondary file-label">백업 가져오기<input id="import" type="file" accept="application/json,.json"></label>' : ''}</div></div></section>
 <footer><span>GDR TENNIS CLUB</span><span>매 경기, 함께 쌓는 기록.</span></footer></main><div id="toast" role="status" aria-live="polite" hidden></div>`;
+const personalView = mountPersonalView({ element: $('#personal-view'), players, getRecords: () => recordsFrom(state), getSessions: () => state.sessions, isReady: () => hasSnapshot, openDate: value => { setMeetingDate(value); switchTab('schedule'); window.scrollTo({ top: 0, behavior: 'smooth' }); } });
 function toast(message) { $('#toast').textContent = message; $('#toast').hidden = false; clearTimeout(toast.timer); toast.timer = setTimeout(() => $('#toast').hidden = true, 5500); }
 function renderAttendees() {
   const members = membersForPeriod(date, players, periods, state.sessions);
@@ -167,14 +171,14 @@ function syncMeetingTimes() {
   $('#end').value = endTime;
   document.querySelectorAll('[data-meeting-time]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.meetingTime === `${startTime}/${endTime}`)));
 }
-function render() { updateConnection(); syncMeetingTimes(); renderSchedule(); renderRanking(); renderPrep(); renderMembers(); }
+function render() { updateConnection(); syncMeetingTimes(); renderSchedule(); renderRanking(); renderPrep(); renderMembers(); personalView.render(); }
 function switchTab(value) {
   const headingBottom = document.querySelector('header').getBoundingClientRect().bottom;
   const tabsTop = window.scrollY + headingBottom;
   const returnToTabs = window.matchMedia('(max-width: 600px)').matches && headingBottom < 0;
   tab = value;
   document.querySelectorAll('[data-tab]').forEach(button => button.setAttribute('aria-selected', String(button.dataset.tab === tab)));
-  for (const name of ['schedule', 'ranking', 'prep', 'members']) $(`#${name}-view`).hidden = name !== tab;
+  for (const name of ['schedule', 'ranking', 'personal', 'prep', 'members']) $(`#${name}-view`).hidden = name !== tab;
   document.querySelector('.page-head').hidden = tab !== 'schedule' || !!(state.sessions[date] || draft);
   if (returnToTabs) window.scrollTo({ top: tabsTop, behavior: 'instant' });
 }
@@ -229,7 +233,7 @@ $('#app').addEventListener('click', async event => {
     else if (button.id === 'apply-quotas') { build(Object.fromEntries([...document.querySelectorAll('[data-quota]')].map(select => [select.dataset.quota, Number(select.value)]))); toast('개인 경기 수를 반영했습니다.'); }
     else if (button.id === 'save-schedule') { if (!store?.canWrite) throw new Error('저장 연결 상태를 확인해 주세요.'); button.disabled = true; await store.saveSession(draft); draft = null; renderSchedule(); toast('대진 저장 완료. 점수를 입력할 수 있습니다.'); }
     else if (button.id === 'print') window.print();
-    else if (button.dataset.player) { playerFilter = button.dataset.player; renderRanking(); $('#history').scrollIntoView({ behavior: 'smooth', block: 'center' }); }
+    else if (button.dataset.player) { personalView.selectPlayer(button.dataset.player, selectedPeriod()); switchTab('personal'); window.scrollTo({ top: 0, behavior: 'smooth' }); }
     else if (button.dataset.openDate) { setMeetingDate(button.dataset.openDate); switchTab('schedule'); window.scrollTo({ top: 0, behavior: 'smooth' }); }
     else if (button.id === 'backup') download(JSON.stringify(state, null, 2), `gdr-backup-${koreaToday()}.json`, 'application/json');
     else if (button.id === 'export-csv') {
@@ -291,7 +295,7 @@ $('#app').addEventListener('submit', async event => {
   } catch (error) { toast(error.message); button.disabled = false; }
 });
 renderAttendees(); render();
-try { store = await createStore(next => { state = next; hasSnapshot = true; render(); }, (text, canWrite) => { status = text; writable = canWrite; render(); }); }
+try { store = await createStore(next => { state = next; hasSnapshot = true; render(); }, (text, canWrite) => { status = text; writable = canWrite; render(); }); await readHistory(personalView.setHistory, personalView.setHistoryStatus); }
 catch (error) { status = error.message; writable = false; updateConnection(); }
 window.addEventListener('offline', () => { if (firebaseConfigured) { writable = false; status = '인터넷 연결 끊김 · 입력값은 유지됩니다'; updateConnection(); renderSchedule(); } });
 window.addEventListener('online', () => { if (firebaseConfigured) { writable = store?.canWrite || false; status = '공유 기록 다시 연결 중'; updateConnection(); renderSchedule(); } });

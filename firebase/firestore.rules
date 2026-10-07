@@ -95,6 +95,20 @@ service cloud.firestore {
         && request.resource.data.revision == resource.data.revision + 1;
       allow delete: if false;
     }
+    // Historical snapshots are imported by the project administrator only.
+    // Members may view them; client writes cannot alter the source archive.
+    match /clubs/gdr/historySets/{setId} {
+      allow read: if true;
+      allow write: if false;
+    }
+    match /clubs/gdr/historySources/{sourceId} {
+      allow read: if true;
+      allow write: if false;
+    }
+    match /clubs/gdr/historyImports/{importId} {
+      allow read: if true;
+      allow write: if false;
+    }
     match /{document=**} { allow read, write: if false; }
   }
 }
