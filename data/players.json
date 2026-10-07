@@ -1,0 +1,16 @@
+[
+  {"id":"gdr001","name":"김민종","shortName":"민종","gender":"male"},
+  {"id":"gdr002","name":"여상재","shortName":"상재","gender":"male"},
+  {"id":"gdr003","name":"김남엽","shortName":"남엽","gender":"male"},
+  {"id":"gdr004","name":"김동주","shortName":"동주","gender":"male"},
+  {"id":"gdr005","name":"김웅기","shortName":"웅기","gender":"male"},
+  {"id":"gdr006","name":"김진삼","shortName":"진삼","gender":"male"},
+  {"id":"gdr007","name":"나수한","shortName":"수한","gender":"male"},
+  {"id":"gdr008","name":"박명진","shortName":"명진","gender":"male"},
+  {"id":"gdr009","name":"심진우","shortName":"진우","gender":"male"},
+  {"id":"gdr010","name":"장재혁","shortName":"재혁","gender":"male"},
+  {"id":"gdr011","name":"허근화","shortName":"근화","gender":"male"},
+  {"id":"gdr012","name":"홍성현","shortName":"성현","gender":"male"},
+  {"id":"gdr013","name":"서명렬","shortName":"명렬","gender":"male"},
+  {"id":"gdr014","name":"최지원","shortName":"지원","gender":"female"}
+]

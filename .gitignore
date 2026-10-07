@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.env
+.env.local
+.serena/
+.playwright-cli/
+output/
+*-debug.log
