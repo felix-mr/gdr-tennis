@@ -1,1 +1,14 @@
-{"schemaVersion":1,"sourcePeriod":null,"ratings":{}}
+{
+  "schemaVersion": 1,
+  "sourcePeriod": null,
+  "priorGames": 12,
+  "groups": [
+    ["gdr001", "gdr002"],
+    ["gdr005", "gdr004"],
+    ["gdr003", "gdr012"],
+    ["gdr013", "gdr009"],
+    ["gdr006", "gdr007"],
+    ["gdr014", "gdr008"],
+    ["gdr011", "gdr010"]
+  ]
+}

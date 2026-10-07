@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { ranking, recordsFrom, validateSession, quarter, validDate, nextSunday } from '../src/model.js';
-import { allocateGames, allocateForWindow, generateSchedule, strengthsFromRanking } from '../src/scheduler.js';
+import { allocateGames, allocateForWindow, generateSchedule } from '../src/scheduler.js';
 import players from '../data/players.json' with { type: 'json' };
 let seed = 12026;
 function random() { seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0; return seed / 4294967296; }
@@ -71,15 +71,6 @@ test('all feasible windows fit for 4–14 attendees', () => {
     const result = generateSchedule(ids, quotas, { random, attempts: 100 });
     assert.ok(Math.max(...Object.values(result.matchMap).map(m => m.round)) <= rounds);
   }
-});
-test('strengths normalize tied quarter ranks and keep previous-quarter baseline for unrecorded players', () => {
-  const values = strengthsFromRanking([
-    { id: 'a', games: 4, rank: 1 }, { id: 'b', games: 3, rank: 1 },
-    { id: 'c', games: 3, rank: 3 }, { id: 'd', games: 0, rank: null },
-    { id: 'e', games: 0, rank: null },
-  ], { d: 0.8 });
-  assert.deepEqual(values, { a: 1, b: 1, c: 0, d: 0.8, e: 0.5 });
-  assert.deepEqual(strengthsFromRanking([{ id: 'a', games: 0 }, { id: 'b', games: 0 }]), { a: 0.5, b: 0.5 });
 });
 test('two strong and two weak players form balanced teams', () => {
   const ids = ['a', 'b', 'c', 'd'];

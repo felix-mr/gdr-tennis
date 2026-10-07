@@ -4,7 +4,8 @@ const players = [...playerData].sort((a, b) => a.name.localeCompare(b.name, 'ko'
 import periods from '../data/periods.json';
 import baseline from '../data/strength-baseline.json';
 import { koreaToday, nextSunday, quarter, recordsFrom, ranking, outcome } from './model.js';
-import { allocateForWindow, generateSchedule, strengthsFromRanking } from './scheduler.js';
+import { allocateForWindow, generateSchedule } from './scheduler.js';
+import { strengthsForSession } from './ratings.js';
 import { createStore, firebaseConfigured } from './store.js';
 const courtName = court => court === 1 ? '안쪽' : '바깥쪽';
 const $ = selector => document.querySelector(selector);
@@ -108,7 +109,7 @@ function build(quotas) {
   const windowRounds = (minutes(endTime) - minutes(startTime)) / roundMinutes;
   const activePairs = lockedPairs.filter(pair => pair.every(id => ids.includes(id)));
   quotas ??= allocateForWindow(ids, windowRounds, currentTotals(), activePairs);
-  const strengths = strengthsFromRanking(ranking(recordsFrom(state).filter(r => quarter(r.date) === quarter(date) && r.date < date), players), baseline.ratings);
+  const strengths = strengthsForSession(recordsFrom(state), players.map(p => p.id), baseline, date);
   const result = generateSchedule(ids, quotas, { strengths, lockedPairs: activePairs });
   if (Math.max(...Object.values(result.matchMap).map(m => m.round)) > windowRounds) throw new Error('조정한 경기 수를 모임 시간 안에 배정할 수 없습니다. 종료 시간을 늘리거나 경기 수를 줄여 주세요.');
   draft = { schemaVersion: 1, date, participantIds: ids, fixedPlayerIds: ids, startTime, roundMinutes, endTime, matchMap: result.matchMap, partnerRepeats: result.partnerRepeats, lockedPairs: activePairs };

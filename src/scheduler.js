@@ -107,19 +107,6 @@ export function allocateForWindow(ids, rounds, totals = {}, lockedPairs = []) {
   return counts;
 }
 
-// Recorded quarter ranks take precedence. Previous-quarter ratings seed members
-// without current-quarter records. Missing or incomparable records remain neutral.
-export function strengthsFromRanking(rows, baseline = {}) {
-  const ranks = rows.filter(row => row.games && Number.isFinite(row.rank)).map(row => row.rank);
-  const minRank = ranks.length ? Math.min(...ranks) : 0;
-  const maxRank = ranks.length ? Math.max(...ranks) : 0;
-  return Object.fromEntries(rows.map(row => {
-    const previous = Number.isFinite(baseline[row.id]) && baseline[row.id] >= 0 && baseline[row.id] <= 1 ? baseline[row.id] : 0.5;
-    const value = row.games && Number.isFinite(row.rank) && maxRank > minRank ? 1 - (row.rank - minRank) / (maxRank - minRank) : previous;
-    return [row.id, Math.round(value * 100) / 100];
-  }));
-}
-
 function pairUnits(ids, pairs) {
   const used = new Set();
   for (const pair of pairs) {
