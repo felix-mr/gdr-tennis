@@ -25,6 +25,9 @@ test('custom 2–4 quotas: reject non-divisible doubles slots', () => {
   assert.throws(() => generateSchedule(['a', 'b', 'c', 'd'], { a: 2, b: 2, c: 2, d: 3 }), /4의 배수/);
   assert.throws(() => allocateGames(['a', 'b', 'c'], 3), /4명/);
 });
+test('manual game counts cannot assign only one game to an attendee', () => {
+  assert.throws(() => generateSchedule(['a', 'b', 'c', 'd', 'e'], { a: 1, b: 2, c: 3, d: 3, e: 3 }), /최소 2경기/);
+});
 test('14 players x 4 games: 14 matches, no repeat partners', () => {
   const ids = players.map(p => p.id), result = generateSchedule(ids, allocateGames(ids, 4), { random });
   assert.equal(Object.keys(result.matchMap).length, 14); assert.equal(result.partnerRepeats, 0);
@@ -66,7 +69,7 @@ test('meeting window determines quotas without target selector', () => {
 test('all feasible windows fit for 4–14 attendees', () => {
   for (let n = 4; n <= 14; n++) for (let rounds = 2; rounds <= 7; rounds++) {
     const ids = players.slice(0, n).map(p => p.id), capacity = rounds * (n >= 8 ? 8 : 4);
-    if (capacity < n) continue;
+    if (capacity < n * 2) continue;
     const quotas = allocateForWindow(ids, rounds);
     const result = generateSchedule(ids, quotas, { random, attempts: 100 });
     assert.ok(Math.max(...Object.values(result.matchMap).map(m => m.round)) <= rounds);
@@ -130,13 +133,13 @@ test('changing Sunday hours to 19–22 gives four attendees six games each', () 
   assert.throws(() => validateSession({ date: '2026-10-11', participantIds: ids, fixedPlayerIds: ids, matchMap, startTime: '19:00', endTime: '21:00', roundMinutes: 30 }, ids), /경기/);
 });
 
-test('short sessions still give each attendee a game and daily counts differ by at most one', () => {
+test('short sessions require two games each and daily counts differ by at most one', () => {
   for (let n = 4; n <= 14; n++) for (const rounds of [1, 2, 4, 6, 12]) {
     const ids = players.slice(0, n).map(p => p.id), slots = rounds * (n >= 8 ? 8 : 4);
-    if (slots < n) { assert.throws(() => allocateForWindow(ids, rounds), /시간/); continue; }
+    if (slots < n * 2) { assert.throws(() => allocateForWindow(ids, rounds), /최소 2경기/); continue; }
     const quotas = Object.values(allocateForWindow(ids, rounds));
     assert.equal(quotas.reduce((sum, value) => sum + value), slots);
-    assert.ok(Math.min(...quotas) >= 1 && Math.max(...quotas) <= rounds);
+    assert.ok(Math.min(...quotas) >= 2 && Math.max(...quotas) <= rounds);
     assert.ok(Math.max(...quotas) - Math.min(...quotas) <= 1);
   }
 });

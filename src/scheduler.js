@@ -14,7 +14,7 @@ export function allocateGames(ids, target, totals = {}) {
 }
 const pairKey = (a, b) => [a, b].sort().join('|');
 export function generateSchedule(ids, quotas, { random = Math.random, attempts = 250, strengths = {}, lockedPairs = [], preferredPairs = [] } = {}) {
-  if (ids.length < 4 || new Set(ids).size !== ids.length || Object.keys(quotas).length !== ids.length || ids.some(id => !Number.isInteger(quotas[id]) || quotas[id] < 1 || quotas[id] > MAX_ROUNDS)) throw new Error('참가자별 경기 수를 모임 시간에 맞춰 주세요.');
+  if (ids.length < 4 || new Set(ids).size !== ids.length || Object.keys(quotas).length !== ids.length || ids.some(id => !Number.isInteger(quotas[id]) || quotas[id] < 2 || quotas[id] > MAX_ROUNDS)) throw new Error('참가자별 최소 2경기를 모임 시간에 맞춰 주세요.');
   const units = pairUnits(ids, lockedPairs);
   pairUnits(ids, preferredPairs);
   const allPreferred = [...lockedPairs, ...preferredPairs];
@@ -97,7 +97,7 @@ export function allocateForWindow(ids, rounds, lockedPairs = []) {
   if (!Number.isInteger(rounds) || rounds < 1) throw new Error('모임 종료 시간을 시작 시간보다 뒤로 설정해 주세요.');
   if (rounds > MAX_ROUNDS) throw new Error('모임 시간을 같은 날 안에서 설정해 주세요.');
   const slots = rounds * (ids.length >= 8 ? 8 : 4);
-  if (slots < ids.length) throw new Error('모두 한 경기씩 하기에 시간이 부족합니다. 모임 시간을 늘려 주세요.');
+  if (slots < ids.length * 2) throw new Error('모두 최소 2경기씩 하기에 시간이 부족합니다. 모임 시간을 늘려 주세요.');
   const units = pairUnits(ids, lockedPairs);
   const candidates = units.map(unit => ({ unit, order: Math.random() })).sort((a, b) => a.order - b.order).map(item => item.unit);
   const base = Math.floor(slots / ids.length);
