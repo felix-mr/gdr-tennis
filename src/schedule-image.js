@@ -90,21 +90,25 @@ export async function renderScheduleImage(page) {
   return new File([blob], page.filename, { type: 'image/png' });
 }
 
-let dialog, images = [], current = 0, requestId = 0, opener;
+let dialog, images = [], current = 0, requestId = 0, opener, shareBundle = false;
 const control = id => dialog.querySelector(`#${id}`);
-function supportsShare(file) {
-  try { return !!(navigator.share && navigator.canShare && navigator.canShare({ files: [file] })); } catch { return false; }
+function supportsShare(files) {
+  try { return !!(navigator.share && navigator.canShare && navigator.canShare({ files: Array.isArray(files) ? files : [files] })); } catch { return false; }
 }
+function filesToShare() { const all = images.map(item => item.file); return shareBundle && supportsShare(all) ? all : [images[current].file]; }
 function showPage() {
   const item = images[current];
-  control('image-preview').innerHTML = `<img src="${item.url}" alt="${item.page.date} GDR 대진표 ${item.page.page}장" width="1080">`;
+  const img = document.createElement('img'); img.src = item.url; img.alt = item.page.title || `${item.page.date} GDR 대진표 ${item.page.page}장`; img.width = 1080;
+  control('image-preview').replaceChildren(img);
   control('image-pager').hidden = images.length === 1;
-  control('image-page-label').textContent = `${current + 1} / ${images.length}`;
+  control('image-page-label').textContent = `${current + 1} / ${images.length}${item.page.label ? ` · ${item.page.label}` : ''}`;
   control('image-previous').disabled = current === 0; control('image-next').disabled = current === images.length - 1;
   control('image-download').disabled = false;
-  control('image-share').disabled = !supportsShare(item.file);
-  control('image-fallback').hidden = supportsShare(item.file);
-  control('image-status').textContent = images.length > 1 ? `${images.length}장으로 나눴습니다. 각 이미지를 저장·공유해 주세요.` : '이미지를 길게 눌러 사진에 저장할 수 있습니다.';
+  const files = filesToShare();
+  control('image-share').disabled = !supportsShare(files);
+  control('image-share').textContent = files.length === 2 ? '두 장 함께 공유' : '이미지 공유';
+  control('image-fallback').hidden = supportsShare(files);
+  control('image-status').textContent = images.length > 1 ? `${images.length}장입니다. 각 이미지를 저장·공유해 주세요.` : '이미지를 길게 눌러 사진에 저장할 수 있습니다.';
   control('image-preview').setAttribute('aria-busy', 'false');
 }
 function createDialog() {
@@ -131,22 +135,27 @@ function createDialog() {
       button.disabled = true;
       try {
         // Files are prepared before this click so mobile user activation remains valid.
-        await navigator.share({ files: [item.file], title: `GDR ${item.page.date} 대진표` });
+        await navigator.share({ files: filesToShare(), title: shareBundle ? control('image-title').textContent : item.page.title || `GDR ${item.page.date} 대진표` });
       } catch (error) {
         if (error.name !== 'AbortError') control('image-status').textContent = '공유하지 못했습니다. 이미지를 저장한 뒤 카카오톡에 첨부해 주세요.';
-      } finally { if (dialog.open && images.length) button.disabled = !supportsShare(images[current].file); }
+      } finally { if (dialog.open && images.length) button.disabled = !supportsShare(filesToShare()); }
     }
   });
 }
 
 export async function openScheduleImage(session, names, results, saved) {
+  return openImagePages(scheduleImagePages(structuredClone(session), names, structuredClone(results), saved), renderScheduleImage, '대진표 이미지');
+}
+
+export async function openImagePages(pages, renderImage, title, bundle = false) {
+  if (!pages.length) throw new Error('이미지로 저장할 기록이 없습니다.');
   if (!dialog) createDialog();
   images.forEach(image => URL.revokeObjectURL(image.url)); images = [];
   opener = document.activeElement;
   const version = ++requestId;
-  current = 0;
-  const pages = scheduleImagePages(structuredClone(session), names, structuredClone(results), saved);
-  control('image-status').textContent = '대진표 이미지를 만들고 있습니다…';
+  current = 0; shareBundle = bundle;
+  control('image-title').textContent = title;
+  control('image-status').textContent = '이미지를 만들고 있습니다…';
   control('image-preview').innerHTML = '<p class="image-loading">잠시만 기다려 주세요.</p>';
   control('image-preview').setAttribute('aria-busy', 'true');
   control('image-pager').hidden = true; control('image-fallback').hidden = true;
@@ -157,7 +166,7 @@ export async function openScheduleImage(session, names, results, saved) {
     await document.fonts.ready;
     for (const page of pages) {
       if (version !== requestId || !dialog.open) return;
-      const file = await renderScheduleImage(page);
+      const file = await renderImage(page);
       if (version !== requestId || !dialog.open) return;
       images.push({ page, file, url: URL.createObjectURL(file) });
     }
