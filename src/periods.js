@@ -1,5 +1,10 @@
 import { quarter, validDate } from './model.js';
 
+export function halfYear(date) {
+  if (!validDate(date)) throw new Error('날짜를 확인해 주세요.');
+  return `${date.slice(0, 4)}-H${Number(date.slice(5, 7)) <= 6 ? 1 : 2}`;
+}
+
 export function withinPeriod(value, date) {
   if (typeof value === 'object') return !!value && validDate(value.start) && validDate(value.end) && value.start <= value.end && date >= value.start && date <= value.end;
   if (value === 'all') return true;

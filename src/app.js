@@ -14,7 +14,7 @@ import { createStore, firebaseConfigured } from './store.js';
 import { openScheduleImage } from './schedule-image.js';
 import { membersForPeriod } from './roster.js';
 import { GUEST_IDS, GUEST_STRENGTH, normalizeGuestName, validateGuests, sessionNames } from './guests.js';
-import { withinPeriod, periodLabel, quarterBounds } from './periods.js';
+import { withinPeriod, periodLabel, quarterBounds, halfYear } from './periods.js';
 import { openRecordImages } from './record-image.js';
 import { matchesPlayer, matchesRecord } from './search.js';
 import { mountPersonalView } from './personal-view.js';
@@ -42,6 +42,7 @@ const timeOptions = selectedTime => Array.from({ length: 48 }, (_, i) => {
 }).join('');
 let status = firebaseConfigured ? '공유 기록 연결 중…' : '로컬 기록 불러오는 중…';
 const initialQuarter = quarter(koreaToday());
+let imagePeriod = halfYear(koreaToday());
 $('#app').innerHTML = `
 <header><a class="brand" href="#" aria-label="GDR 홈"><span class="brand-logo"><img src="${import.meta.env.BASE_URL}gdr-logo.png" alt=""></span><span>GDR TENNIS<small>EST 2022</small></span></a><div class="header-actions"><span class="season">${initialQuarter.replace('-Q', ' · Q')}</span><button id="theme-toggle" class="theme-toggle" type="button" aria-label="화면 모드 변경"></button></div></header>
 <main><nav class="tabs" aria-label="화면 선택"><button data-tab="schedule" aria-selected="true">대진표</button><button data-tab="ranking" aria-selected="false">순위 · 기록</button><button data-tab="personal" aria-selected="false">개인 기록</button><button data-tab="prep" aria-selected="false">대회 준비</button><button data-tab="members" aria-selected="false">멤버</button></nav>
@@ -54,7 +55,7 @@ $('#app').innerHTML = `
 <div class="session-settings"><div class="time-setting"><span class="setting-label">모임 시간</span><div class="time-range"><label><span>시작</span><select id="start" aria-label="모임 시작 시간">${timeOptions(startTime)}</select></label><span class="range-arrow">→</span><label><span>종료</span><select id="end" aria-label="모임 종료 시간">${timeOptions(endTime)}</select></label></div><div class="time-presets" role="group" aria-label="자주 쓰는 모임 시간"><button data-meeting-time="19:00/21:00" aria-pressed="true">19:00–21:00</button><button data-meeting-time="19:00/22:00" aria-pressed="false">19:00–22:00</button></div><p class="time-hint">24시간 표기 · 30분 단위 · 같은 날 기준</p></div><div class="court-info"><span class="court-icon" aria-hidden="true"></span><div><strong>2면</strong><span>복식 · 30분 고정</span></div></div></div>
 <div class="builder-bottom"><p>그날 참석 인원·모임 시간에 맞춰 자동 배정.<br>1인 최소 2경기 · 경기 수 차이는 최대 1경기.</p><button id="generate" class="primary">대진 만들기 <span>↗</span></button></div></div>
 <button id="prep-shortcut" data-tab="prep" class="prep-shortcut">대회 준비 페어 설정 →</button><div id="schedule-content"></div></section>
-<section id="ranking-view" hidden><div class="section-heading"><div><h2>우리의 스코어보드</h2><p>승점은 쌓이고, 기록은 남고.</p></div><label class="period-control"><span>조회 기간</span><select id="period"></select></label></div><div class="personal-tabs record-mode-tabs" role="group" aria-label="조회할 기록"><button data-record-mode="live" aria-pressed="true">경기 기록</button><button data-record-mode="archive" aria-pressed="false">이전 집계</button></div><div id="live-records"><div class="record-filters"><div id="custom-range" class="custom-range" hidden><label>시작일<input id="range-start" type="date" value="${rangeStart}"></label><label>종료일<input id="range-end" type="date" value="${rangeEnd}"></label><button id="apply-range" class="secondary">기간 적용</button><p id="range-error" role="alert"></p></div><div class="record-search"><label class="sr-only" for="record-search">회원·게스트 이름 검색</label><input id="record-search" type="search" placeholder="회원·게스트 이름 검색" autocomplete="off"><button id="clear-record-search" class="text-button" aria-label="이름 검색 지우기" hidden>지우기</button></div><p id="search-results" role="status"></p></div><div id="ranking-summary" class="summary-grid"></div><div class="rank-panel"><div class="panel-top"><h3 id="ranking-title"></h3><button id="export-csv" class="text-button">CSV 내려받기 ↓</button></div><p class="table-scroll-hint">좌우로 넘겨 전체 기록을 확인하세요.</p><div class="table-scroll" role="region" aria-label="개인 순위표" tabindex="0"><table><caption class="sr-only">GDR 개인 순위</caption><thead><tr><th>순위</th><th>이름</th><th>승점</th><th>경기</th><th>승</th><th>무</th><th>패</th><th>승률</th><th>득</th><th>실</th><th>득실차</th></tr></thead><tbody id="rankings"></tbody></table></div><p class="table-note">승 3점 · 무 1점 · 패 0점 / 같은 승점은 공동순위 / 승률 = 승 ÷ 전체 경기</p></div><div class="record-image-tools"><div><h3>기록 이미지 2장</h3><p>당일 결과와 선택한 날까지의 전체 회원 순위를 함께 보관하세요.</p></div><div class="record-image-controls"><label><span>당일 결과 날짜</span><select id="stats-date"></select></label><button id="export-record-images" class="secondary" disabled>두 장 저장·공유</button></div></div><div class="section-heading history-head"><h3>경기 기록</h3><label class="sr-only" for="player-filter">선수</label><select id="player-filter"><option value="">전체 멤버</option>${players.map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join('')}</select></div><div id="history"></div></div><div id="archive-records" hidden></div></section>
+<section id="ranking-view" hidden><div class="section-heading"><div><h2>우리의 스코어보드</h2><p>승점은 쌓이고, 기록은 남고.</p></div><label class="period-control"><span>조회 기간</span><select id="period"></select></label></div><div class="personal-tabs record-mode-tabs" role="group" aria-label="조회할 기록"><button data-record-mode="live" aria-pressed="true">경기 기록</button><button data-record-mode="archive" aria-pressed="false">이전 집계</button></div><div id="live-records"><div class="record-filters"><div id="custom-range" class="custom-range" hidden><label>시작일<input id="range-start" type="date" value="${rangeStart}"></label><label>종료일<input id="range-end" type="date" value="${rangeEnd}"></label><button id="apply-range" class="secondary">기간 적용</button><p id="range-error" role="alert"></p></div><div class="record-search"><label class="sr-only" for="record-search">회원·게스트 이름 검색</label><input id="record-search" type="search" placeholder="회원·게스트 이름 검색" autocomplete="off"><button id="clear-record-search" class="text-button" aria-label="이름 검색 지우기" hidden>지우기</button></div><p id="search-results" role="status"></p></div><div id="ranking-summary" class="summary-grid"></div><div class="rank-panel"><div class="panel-top"><h3 id="ranking-title"></h3><button id="export-csv" class="text-button">CSV 내려받기 ↓</button></div><p class="table-scroll-hint">좌우로 넘겨 전체 기록을 확인하세요.</p><div class="table-scroll" role="region" aria-label="개인 순위표" tabindex="0"><table><caption class="sr-only">GDR 개인 순위</caption><thead><tr><th>순위</th><th>이름</th><th>승점</th><th>경기</th><th>승</th><th>무</th><th>패</th><th>승률</th><th>득</th><th>실</th><th>득실차</th></tr></thead><tbody id="rankings"></tbody></table></div><p class="table-note">승 3점 · 무 1점 · 패 0점 / 같은 승점은 공동순위 / 승률 = 승 ÷ 전체 경기</p></div><div class="record-image-tools"><div><h3>기록 이미지 2장</h3><p id="record-image-note">당일 결과와 하반기 누적 순위를 함께 보관하세요.</p></div><div class="record-image-controls"><label><span>누적 순위 기간</span><select id="stats-period"></select></label><label><span>당일 결과 날짜</span><select id="stats-date"></select></label><button id="export-record-images" class="secondary" disabled>두 장 저장·공유</button></div></div><div class="section-heading history-head"><h3>경기 기록</h3><label class="sr-only" for="player-filter">선수</label><select id="player-filter"><option value="">전체 멤버</option>${players.map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join('')}</select></div><div id="history"></div></div><div id="archive-records" hidden></div></section>
 <section id="personal-view" hidden></section>
 <section id="prep-view" hidden><div class="section-heading"><div><h2>같이 나갈 우리 조</h2><p>대회를 준비하는 두 멤버를 페어로 등록해 주세요.</p></div></div><div class="prep-editor"><div class="panel-top"><h3>멤버 두 명 선택</h3><span id="prep-selection-count">0 / 2</span></div><div id="prep-candidates" class="prep-candidates"></div><div class="prep-selection-footer"><p id="prep-selection-label">함께할 두 멤버를 선택해 주세요.</p><button id="add-prep-pair" class="primary" disabled>페어 등록</button></div></div><div class="section-heading prep-list-heading"><h3>등록된 페어 <span id="prep-pair-count">0조</span></h3><p>함께 참석하면 같은 팀으로 출전합니다.</p></div><div id="prep-pairs" class="prep-pairs"></div><p class="prep-footnote">한 멤버는 한 페어에 등록 가능. 한 명이 불참하면 해당 모임에는 적용하지 않습니다.</p></section>
 <section id="members-view" hidden><div class="section-heading"><div><h2>우리 클럽 멤버</h2><p id="member-summary"></p></div><label class="period-control"><span>멤버 보기</span><select id="member-period"><option value="all">전체 멤버 ${players.length}명</option>${periods.map(period => `<option value="${period.id}">${period.label} ${period.memberIds.length}명</option>`).join('')}</select></label></div><div class="gender-legend"><span><i class="male-dot"></i>남성</span><span><i class="female-dot"></i>여성</span></div><div class="member-grid" id="member-grid"></div><div class="backup-panel"><div><h3>기록 보관</h3><p>${firebaseConfigured ? '공유 DB의 대진과 점수를 백업 파일로 보관할 수 있습니다.' : '로컬 기록은 이 브라우저에 저장됩니다. 백업 파일로 보관해 주세요.'}</p></div><div class="backup-actions"><button id="backup" class="secondary">백업 내려받기</button>${!firebaseConfigured ? '<label class="secondary file-label">백업 가져오기<input id="import" type="file" accept="application/json,.json"></label>' : ''}</div></div></section>
@@ -127,9 +128,9 @@ ${rounds.map(round => {
 }
 function selectedPeriod() { return filter === 'custom' ? { start: rangeStart, end: rangeEnd } : filter; }
 function scopedRecords() { return recordsFrom(state).filter(r => withinPeriod(selectedPeriod(), r.date)); }
-function scopedPlayers() {
-  const ids = new Set(membersForPeriod(selectedPeriod(), players, periods, state.sessions).map(player => player.id));
-  for (const row of datedHistory(historySets, selectedPeriod(), recordsFrom(state))) ids.add(row.playerId);
+function scopedPlayers(value = selectedPeriod()) {
+  const ids = new Set(membersForPeriod(value, players, periods, state.sessions).map(player => player.id));
+  for (const row of datedHistory(historySets, value, recordsFrom(state))) ids.add(row.playerId);
   return historicalPlayers(historySets, players).filter(player => ids.has(player.id));
 }
 function renderRanking() {
@@ -143,12 +144,15 @@ function renderRanking() {
   const members = scopedPlayers();
   if (!members.some(p => p.id === playerFilter)) playerFilter = '';
   $('#player-filter').innerHTML = `<option value="">전체 멤버</option>${members.map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join('')}`;
+  $('#stats-period').innerHTML = `<optgroup label="반기별">${halves.map(v => `<option value="${v}">${periodLabel(v)}</option>`).join('')}</optgroup><optgroup label="분기별">${values.map(v => `<option value="${v}">${periodLabel(v)}</option>`).join('')}</optgroup>`;
+  $('#stats-period').value = imagePeriod;
   const previousDate = $('#stats-date').value;
-  const imageDates = hasSnapshot ? [...new Set([...scopedRecords().map(record => record.date), ...datedHistory(historySets, selectedPeriod(), recordsFrom(state)).map(row => row.date)])].sort().reverse() : [];
+  const imageDates = hasSnapshot ? [...new Set([...recordsFrom(state).filter(record => withinPeriod(imagePeriod, record.date)).map(record => record.date), ...datedHistory(historySets, imagePeriod, recordsFrom(state)).map(row => row.date)])].sort().reverse() : [];
   $('#stats-date').innerHTML = imageDates.length ? imageDates.map(value => `<option value="${value}">${value}</option>`).join('') : '<option value="">완료 기록 없음</option>';
   $('#stats-date').value = imageDates.includes(previousDate) ? previousDate : imageDates.includes(date) ? date : imageDates[0] || '';
   $('#stats-date').disabled = !imageDates.length;
   $('#export-record-images').disabled = !imageDates.length;
+  $('#record-image-note').textContent = imageDates.length ? `당일 결과 + ${periodLabel(imagePeriod)} 누적 순위 · 선택한 날짜까지의 기록을 이미지 2장으로 저장·공유합니다.` : `${periodLabel(imagePeriod)}에 저장된 날짜별 기록이 없습니다. 다른 기간을 선택해 주세요.`;
   if (!hasSnapshot) {
     $('#ranking-title').textContent = `${periodLabel(selectedPeriod())} 순위`;
     $('#ranking-summary').innerHTML = '';
@@ -249,7 +253,7 @@ $('#app').addEventListener('click', async event => {
     }
     else if (button.id === 'select-all') { const ids = [...membersForPeriod(date, players, periods, state.sessions).map(p => p.id), ...Object.keys(guests)]; selected = new Set(selected.size === ids.length ? [] : ids); draft = null; renderAttendees(); renderSchedule(); }
     else if (button.id === 'export-image') { const session = state.sessions[date] || draft; if (session) await openScheduleImage(session, names, state.results, !!state.sessions[date]); }
-    else if (button.id === 'export-record-images') { await openRecordImages(recordsFrom(state), scopedPlayers(), selectedPeriod(), $('#stats-date').value, historySets); }
+    else if (button.id === 'export-record-images') { await openRecordImages(recordsFrom(state), scopedPlayers(imagePeriod), imagePeriod, $('#stats-date').value, historySets); }
     else if (button.id === 'edit-schedule') { draft = null; renderSchedule(); $('#builder').scrollIntoView({ block: 'start', behavior: 'smooth' }); }
     else if (button.id === 'generate' || button.id === 'regenerate') { build(); $('#schedule-content').scrollIntoView({ block: 'start', behavior: 'smooth' }); toast('대진을 만들었습니다. 확인 후 확정해 주세요.'); }
     else if (button.id === 'apply-quotas') { build(Object.fromEntries([...document.querySelectorAll('[data-quota]')].map(select => [select.dataset.quota, Number(select.value)]))); toast('개인 경기 수를 반영했습니다.'); }
@@ -288,6 +292,7 @@ $('#app').addEventListener('change', async event => {
   else if (input.id === 'date') { setMeetingDate(input.value); }
   else if (['start', 'end'].includes(input.id)) { startTime = $('#start').value; endTime = $('#end').value; syncMeetingTimes(); draft = null; renderSchedule(); }
   else if (input.id === 'period') { filter = input.value; $('#range-error').textContent = ''; renderRanking(); }
+  else if (input.id === 'stats-period') { imagePeriod = input.value; renderRanking(); }
   else if (input.id === 'player-filter') { playerFilter = input.value; renderRanking(); }
   else if (input.id === 'member-period') { memberPeriod = input.value; renderMembers(); }
   else if (input.id === 'import' && input.files[0]) {

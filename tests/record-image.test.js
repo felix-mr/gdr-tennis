@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { withinPeriod, periodLabel } from '../src/periods.js';
+import { withinPeriod, periodLabel, halfYear } from '../src/periods.js';
 import { recordImagePages } from '../src/record-image.js';
 import { membersForPeriod } from '../src/roster.js';
 
@@ -35,4 +35,18 @@ test('no guest, unplayed member or internal rating appears in exported statistic
   const pages = recordImagePages(records, [...players, { id: 'guest001', name: '게스트' }], 'all', '2026-10-04');
   assert.deepEqual(pages[0].rows.map(row => row.id), ['a', 'c', 'd']);
   assert.equal(JSON.stringify(pages).includes('strengths'), false);
+});
+
+test('share default follows the current half-year; both halves and all quarters select their own results', () => {
+  assert.equal(halfYear('2026-10-08'), '2026-H2');
+  assert.equal(halfYear('2026-06-30'), '2026-H1');
+  assert.equal(halfYear('2026-07-01'), '2026-H2');
+  const dates = ['2026-01-04', '2026-04-05', '2026-07-05', '2026-10-04'];
+  const records = dates.map(date => game(date));
+  for (const [period, date, expected] of [['2026-H1', dates[1], 2], ['2026-H2', dates[3], 2], ...dates.map((date, index) => [`2026-Q${index + 1}`, date, 1])]) {
+    const pages = recordImagePages(records, players, period, date);
+    assert.equal(pages[0].rows[0].games, 1);
+    assert.equal(pages[1].rows[0].games, expected);
+    assert.equal(pages[1].title, `GDR ${periodLabel(period)} 순위`);
+  }
 });
