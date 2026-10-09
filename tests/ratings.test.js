@@ -98,6 +98,10 @@ test('half-year snapshots use only verified identities, remove covered actual ou
   const many = { ...snapshot, rows: [{ ...snapshot.rows[0], stats: { games: 40, wins: 40, draws: 0, losses: 0 } }] };
   const priors = initialStrengths(ids, baseline), changed = strengthsForSession([], ids, baseline, date, [many]);
   assert.ok(changed.gdr013 > priors.gdr013 && changed.gdr013 - priors.gdr013 < 0.03);
+  const quarterClose = { ...many, period: '2026-Q3', aggregationRole: 'period-baseline', contributesToRatings: true, cutoff: '2026-09-27' };
+  assert.deepEqual(strengthsForSession([], ids, baseline, date, [quarterClose]), changed);
+  assert.deepEqual(strengthsForSession([], ids, baseline, date, [quarterClose, { ...many, contributesToRatings: false }]), changed);
+  assert.deepEqual(strengthsForSession([], ids, baseline, date, [{ ...many, contributesToRatings: false }]), priors);
   for (const bad of [{ ...many, periodStart: '2026-01-01' }, { ...many, periodStart: undefined }, { ...many, cutoff: date }, { ...many, cutoff: '2026-11-08' }, { ...many, period: '2025-H2' }, { ...many, rows: [{ ...many.rows[0], playerId: null }] }, { ...many, rows: [{ ...many.rows[0], issues: ['ambiguous-identity'] }] }]) assert.deepEqual(strengthsForSession([], ids, baseline, date, [bad]), priors);
 });
 test('dated aggregates stay inside the half-year and covered days never count twice', () => {

@@ -1,5 +1,5 @@
-import { koreaToday, quarter, validDate } from './model.js';
-import { withinPeriod, periodLabel, quarterBounds } from './periods.js';
+import { koreaToday, validDate } from './model.js';
+import { withinPeriod, periodLabel, halfYear, halfYearBounds } from './periods.js';
 import { matchesName } from './search.js';
 import { personalMatchups } from './matchups.js';
 import { rankingWithHistory } from './history-stats.js';
@@ -10,8 +10,8 @@ const statusLabel = status => ({ quarantine: '확인 필요', 'identity-unconfir
 const issueLabel = issue => ({ 'asymmetric-values': '양쪽 표의 값이 다르거나 한쪽 기록이 없습니다', 'ambiguous-identity': '진우가 누구인지 확인이 필요합니다', 'guest-group-not-person': '게스트 전체 집계로 개인별 구분이 없습니다' }[issue] || issue);
 
 export function mountPersonalView({ element, players, getRecords, getSessions, isReady, openDate }) {
-  let selected = players[0].id, period = quarter(koreaToday()), mode = 'partners', query = '', selectedKey = '';
-  let start = quarterBounds(period).start, end = koreaToday(), history = [], historyStatus = '이전 기록 불러오는 중…', datasetId = 'career-2026-06';
+  let selected = players[0].id, period = halfYear(koreaToday()), mode = 'partners', query = '', selectedKey = '';
+  let start = halfYearBounds(period).start, end = koreaToday(), history = [], historyStatus = '이전 기록 불러오는 중…', datasetId = 'career-2026-06';
   const $ = selector => element.querySelector(selector);
   const currentPeriod = () => period === 'custom' ? { start, end } : period;
   element.innerHTML = `<div class="section-heading"><div><h2>개인 경기 기록</h2><p>함께한 파트너와 상대한 페어별로.</p></div></div>

@@ -63,7 +63,7 @@ function halfYearEvidence(history, actual, ids, date) {
   const period = halfYear(date), cutoffLimit = date;
   const output = Object.fromEntries(ids.map(id => [id, { games: 0, wins: 0, draws: 0, losses: 0 }]));
   const start = `${date.slice(0, 4)}-${period.endsWith('H1') ? '01' : '07'}-01`;
-  const snapshot = history.filter(set => set.kind === 'individual-aggregate' && set.period === period && set.periodStart === start && set.datePrecision === 'day' && validDate(set.cutoff) && withinPeriod(period, set.cutoff) && set.cutoff < cutoffLimit && set.status !== 'superseded').sort((a, b) => b.cutoff.localeCompare(a.cutoff))[0];
+  const snapshot = history.filter(set => set.kind === 'individual-aggregate' && set.contributesToRatings !== false && (set.period === period || set.aggregationRole === 'period-baseline') && set.periodStart === start && set.datePrecision === 'day' && validDate(set.cutoff) && withinPeriod(period, set.cutoff) && set.cutoff < cutoffLimit && set.status !== 'superseded').sort((a, b) => b.cutoff.localeCompare(a.cutoff))[0];
   const covered = new Set();
   if (snapshot) for (const row of snapshot.rows || []) {
     if (!ids.includes(row.playerId) || row.issues?.length || ['quarantine', 'identity-unconfirmed'].includes(row.status) || row.identityStatus === 'tentative-user-guidance') continue;

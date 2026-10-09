@@ -13,7 +13,7 @@ export function allocateGames(ids, target, totals = {}) {
   return counts;
 }
 const pairKey = (a, b) => [a, b].sort().join('|');
-export function generateSchedule(ids, quotas, { random = Math.random, attempts = 250, strengths = {}, lockedPairs = [], preferredPairs = [] } = {}) {
+export function generateSchedule(ids, quotas, { random = Math.random, attempts = 250, strengths = {}, lockedPairs = [], preferredPairs = [], timingPreferences = {} } = {}) {
   if (ids.length < 4 || new Set(ids).size !== ids.length || Object.keys(quotas).length !== ids.length || ids.some(id => !Number.isInteger(quotas[id]) || quotas[id] < 2 || quotas[id] > MAX_ROUNDS)) throw new Error('참가자별 최소 2경기를 모임 시간에 맞춰 주세요.');
   const units = pairUnits(ids, lockedPairs);
   pairUnits(ids, preferredPairs);
@@ -26,9 +26,10 @@ export function generateSchedule(ids, quotas, { random = Math.random, attempts =
   const rounds = Math.max(...Object.values(quotas), Math.ceil(slots / (ids.length >= 8 ? 8 : 4)));
   if (rounds > MAX_ROUNDS) throw new Error('모임 시간을 같은 날 안에서 설정해 주세요.');
   const strength = id => Number.isFinite(strengths[id]) && strengths[id] >= 0 && strengths[id] <= 1 ? strengths[id] : 0.5;
+  if (Object.entries(timingPreferences).some(([id, value]) => !ids.includes(id) || !['early', 'late'].includes(value))) throw new Error('멤버별 시작·마무리 선택을 확인해 주세요.');
   let best = null;
   for (let attempt = 0; attempt < attempts; attempt++) {
-    const remaining = { ...quotas }, partners = {}, opponents = {}, lastActive = {}, restStreak = {}, matchMap = {};
+    const remaining = { ...quotas }, partners = {}, opponents = {}, firstActive = {}, lastActive = {}, restStreak = {}, matchMap = {};
     let remainingSlots = slots, cost = 0, failed = false;
     for (let round = 1; round <= rounds; round++) {
       const future = rounds - round;
@@ -41,7 +42,8 @@ export function generateSchedule(ids, quotas, { random = Math.random, attempts =
       const availableUnits = units.filter(unit => remaining[unit[0]] > 0);
       const requiredUnits = availableUnits.filter(unit => remaining[unit[0]] > future);
       const requiredIds = requiredUnits.flat();
-      const candidates = availableUnits.filter(unit => !requiredUnits.includes(unit)).map(unit => ({ unit, priority: remaining[unit[0]] * 10 + unit.reduce((sum, id) => sum + (restStreak[id] || 0), 0) / unit.length * 5 + random() * 12 })).sort((a, b) => b.priority - a.priority).map(item => item.unit);
+      const phase = 1 - 2 * (round - 1) / Math.max(1, rounds - 1);
+      const candidates = availableUnits.filter(unit => !requiredUnits.includes(unit)).map(unit => ({ unit, priority: remaining[unit[0]] * 10 + unit.reduce((sum, id) => sum + (restStreak[id] || 0) * 1000 + (timingPreferences[id] === 'early' ? 30 * phase : timingPreferences[id] === 'late' ? -30 * phase : 0), 0) / unit.length + random() * 12 })).sort((a, b) => b.priority - a.priority).map(item => item.unit);
       const choose = (index, needed) => {
         if (needed === 0) return [];
         if (needed < 0 || index === candidates.length) return null;
@@ -78,14 +80,27 @@ export function generateSchedule(ids, quotas, { random = Math.random, attempts =
         for (const a of teamA) for (const b of teamB) { const key = pairKey(a, b); opponents[key] = (opponents[key] || 0) + 1; }
       }
       for (const id of ids) {
-        if (active.includes(id)) { remaining[id]--; restStreak[id] = 0; lastActive[id] = round; }
-        else { restStreak[id] = (restStreak[id] || 0) + 1; cost += restStreak[id] > 1 ? 8 : 0; }
+        if (active.includes(id)) { remaining[id]--; restStreak[id] = 0; firstActive[id] ??= round; lastActive[id] = round; }
+        else restStreak[id] = (restStreak[id] || 0) + 1;
       }
       remainingSlots -= count;
     }
-    if (!failed && remainingSlots === 0 && Object.values(remaining).every(n => !n) && (!best || cost < best.cost)) best = { matchMap, cost, partnerRepeats: Object.entries(partners).filter(([key]) => !fixedKeys.has(key)).reduce((s, [, n]) => s + Math.max(0, n - 1), 0) };
+    if (!failed && remainingSlots === 0 && Object.values(remaining).every(n => !n)) {
+      // Intentional late starts and early departures are outside that person's
+      // waiting window. Inside it, avoiding consecutive rests outranks pairing cost.
+      const activeByRound = Array.from({ length: rounds }, (_, index) => new Set(Object.values(matchMap).filter(match => match.round === index + 1).flatMap(match => [...match.teamA, ...match.teamB])));
+      let consecutiveRests = 0;
+      for (const id of ids) {
+        const start = timingPreferences[id] === 'late' ? firstActive[id] : 1, end = timingPreferences[id] === 'early' ? lastActive[id] : rounds;
+        let streak = 0;
+        for (let r = start; r <= end; r++) { streak = activeByRound[r - 1].has(id) ? 0 : streak + 1; if (streak > 1) consecutiveRests++; }
+        if (timingPreferences[id] === 'early') cost += (lastActive[id] - 1) * 10;
+        if (timingPreferences[id] === 'late') cost += (rounds - firstActive[id]) * 10;
+      }
+      if (!best || consecutiveRests < best.consecutiveRests || (consecutiveRests === best.consecutiveRests && cost < best.cost)) best = { matchMap, cost, consecutiveRests, partnerRepeats: Object.entries(partners).filter(([key]) => !fixedKeys.has(key)).reduce((s, [, n]) => s + Math.max(0, n - 1), 0) };
+    }
   }
-  if (!best && lockedPairs.length) return generateSchedule(ids, quotas, { random, attempts, strengths, preferredPairs: lockedPairs });
+  if (!best && lockedPairs.length) return generateSchedule(ids, quotas, { random, attempts, strengths, preferredPairs: lockedPairs, timingPreferences });
   if (!best) throw new Error('이 경기 수 조합으로 배정하지 못했습니다. 개인 경기 수를 고르게 조정해 주세요.');
   const gaps = Object.values(best.matchMap).map(match => Math.abs(match.teamA.reduce((sum, id) => sum + strength(id), 0) - match.teamB.reduce((sum, id) => sum + strength(id), 0)));
   best.balance = { averageGap: gaps.reduce((a, b) => a + b, 0) / gaps.length, maxGap: Math.max(...gaps) };

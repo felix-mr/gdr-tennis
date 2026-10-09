@@ -4,6 +4,11 @@ export function halfYear(date) {
   if (!validDate(date)) throw new Error('날짜를 확인해 주세요.');
   return `${date.slice(0, 4)}-H${Number(date.slice(5, 7)) <= 6 ? 1 : 2}`;
 }
+export function halfYearBounds(value) {
+  if (!/^\d{4}-H[12]$/.test(value)) throw new Error('반기를 확인해 주세요.');
+  const year = Number(value.slice(0, 4)), month = value.endsWith('H1') ? 0 : 6;
+  return { start: new Date(Date.UTC(year, month, 1)).toISOString().slice(0, 10), endBefore: new Date(Date.UTC(year, month + 6, 1)).toISOString().slice(0, 10) };
+}
 
 export function withinPeriod(value, date) {
   if (typeof value === 'object') return !!value && validDate(value.start) && validDate(value.end) && value.start <= value.end && date >= value.start && date <= value.end;

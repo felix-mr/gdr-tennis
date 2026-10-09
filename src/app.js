@@ -2,7 +2,7 @@ import './style.css';
 import './theme.css';
 import { setupTheme } from './theme.js';
 import { mountArchiveView } from './archive-view.js';
-import { datedHistory, historicalPlayers, rankingWithHistory } from './history-stats.js';
+import { baselineHistory, datedHistory, historicalPlayers, rankingWithHistory } from './history-stats.js';
 import playerData from '../data/players.json';
 const players = [...playerData].sort((a, b) => a.name.localeCompare(b.name, 'ko'));
 import periods from '../data/periods.json';
@@ -14,7 +14,7 @@ import { createStore, firebaseConfigured } from './store.js';
 import { openScheduleImage } from './schedule-image.js';
 import { membersForPeriod } from './roster.js';
 import { GUEST_IDS, GUEST_STRENGTH, normalizeGuestName, validateGuests, sessionNames } from './guests.js';
-import { withinPeriod, periodLabel, quarterBounds, halfYear } from './periods.js';
+import { withinPeriod, periodLabel, halfYear, halfYearBounds } from './periods.js';
 import { openRecordImages } from './record-image.js';
 import { matchesPlayer, matchesRecord } from './search.js';
 import { mountPersonalView } from './personal-view.js';
@@ -30,12 +30,13 @@ const team = (ids, profiles = state.sessions[date]?.guests || guests) => { const
 let state = { schemaVersion: 1, sessions: {}, results: {} }, draft = null, store, writable = false, historySets = [];
 let hasSnapshot = false, historyReady = !firebaseConfigured;
 let lockedPairs = [], prepSelection = new Set(), pairsEnabled = true;
+let timingPreferences = {};
 let viewerDate = '', viewerPlayer = '';
 try { pairsEnabled = localStorage.getItem('gdr-prep-enabled') !== 'false'; const pairs = JSON.parse(localStorage.getItem('gdr-prep-pairs') || '[]'); const all = pairs.flat(); if (pairs.every(pair => pair.length === 2 && pair.every(id => names[id])) && new Set(all).size === all.length) lockedPairs = pairs; } catch {}
-let tab = 'schedule', date = nextSunday(koreaToday()), filter = quarter(koreaToday()), playerFilter = '', dirty = new Map(), memberPeriod = 'all';
+let tab = 'schedule', date = nextSunday(koreaToday()), filter = halfYear(koreaToday()), playerFilter = '', dirty = new Map(), memberPeriod = 'all';
 let selected = new Set(membersForPeriod(date, players, periods).map(p => p.id));
 let guests = {};
-let search = '', rangeStart = quarterBounds(quarter(koreaToday())).start, rangeEnd = koreaToday();
+let search = '', rangeStart = halfYearBounds(halfYear(koreaToday())).start, rangeEnd = koreaToday();
 const roundMinutes = 30;
 let startTime = '19:00', endTime = '21:00';
 const timeOptions = selectedTime => Array.from({ length: 48 }, (_, i) => {
@@ -55,9 +56,9 @@ $('#app').innerHTML = `
 <div class="builder" id="builder"><div class="panel-top"><h3>참석 멤버 <span id="selected-count"></span></h3><button id="select-all" class="text-button">전체 해제</button></div><p id="roster-note" class="hint" hidden></p><div class="player-grid" id="attendees"></div>
 <div class="guest-section"><div class="panel-top"><h3>게스트 <span id="guest-count">0명</span></h3><button id="add-guest" class="secondary" aria-expanded="false" aria-controls="guest-editor">게스트 +</button></div><div id="guest-editor" hidden><form id="guest-form" class="guest-form"><label class="sr-only" for="guest-name">게스트 이름</label><input id="guest-name" name="guestName" type="text" maxlength="12" placeholder="게스트 이름" required autocomplete="off" enterkeyhint="done"><button class="primary" type="submit">추가</button><button id="cancel-guest" class="text-button" type="button">취소</button></form></div><div id="guests" class="guest-grid"></div><p class="hint">함께 경기할 게스트의 이름을 입력해 주세요. 회원 순위에는 포함되지 않습니다.</p></div>
 <div class="session-settings"><div class="time-setting"><span class="setting-label">모임 시간</span><div class="time-range"><label><span>시작</span><select id="start" aria-label="모임 시작 시간">${timeOptions(startTime)}</select></label><span class="range-arrow">→</span><label><span>종료</span><select id="end" aria-label="모임 종료 시간">${timeOptions(endTime)}</select></label></div><div class="time-presets" role="group" aria-label="자주 쓰는 모임 시간"><button data-meeting-time="19:00/21:00" aria-pressed="true">19:00–21:00</button><button data-meeting-time="19:00/22:00" aria-pressed="false">19:00–22:00</button></div><p class="time-hint">24시간 표기 · 30분 단위 · 같은 날 기준</p></div><div class="court-info"><span class="court-icon" aria-hidden="true"></span><div><strong>2면</strong><span>복식 · 30분 고정</span></div></div></div>
-<details id="pair-settings" class="pair-settings"><summary><span>고정 페어</span><small id="pair-summary"></small></summary><label class="pair-setting-toggle"><span><strong>등록한 페어 유지하기</strong><small>대회 준비 등 같은 파트너와 출전할 때 켜 주세요.</small></span><input id="pairs-enabled" type="checkbox" ${pairsEnabled ? 'checked' : ''} role="switch"></label><div class="prep-editor"><div class="panel-top"><h3>멤버 두 명 선택</h3><span id="prep-selection-count">0 / 2</span></div><div id="prep-candidates" class="prep-candidates"></div><div class="prep-selection-footer"><p id="prep-selection-label">함께할 두 멤버를 선택해 주세요.</p><button id="add-prep-pair" class="primary" disabled>페어 등록</button></div></div><div class="section-heading prep-list-heading"><h3>등록된 페어 <span id="prep-pair-count">0조</span></h3><p>두 명 모두 참석한 페어에 적용합니다.</p></div><div id="prep-pairs" class="prep-pairs"></div><p class="prep-footnote">등록한 페어는 이 기기에 유지됩니다. 한 명이 불참하면 해당 모임에는 적용하지 않습니다.</p></details><div class="builder-bottom"><p>그날 참석 인원·모임 시간에 맞춰 자동 배정.<br>1인 최소 2경기 · 경기 수 차이는 최대 1경기.</p><button id="generate" class="primary">대진 만들기 <span>↗</span></button></div></div>
+<details id="pair-settings" class="pair-settings"><summary><span>고정 페어</span><small id="pair-summary"></small></summary><label class="pair-setting-toggle"><span><strong>등록한 페어 유지하기</strong><small>대회 준비 등 같은 파트너와 출전할 때 켜 주세요.</small></span><input id="pairs-enabled" type="checkbox" ${pairsEnabled ? 'checked' : ''} role="switch"></label><div class="prep-editor"><div class="panel-top"><h3>멤버 두 명 선택</h3><span id="prep-selection-count">0 / 2</span></div><div id="prep-candidates" class="prep-candidates"></div><div class="prep-selection-footer"><p id="prep-selection-label">함께할 두 멤버를 선택해 주세요.</p><button id="add-prep-pair" class="primary" disabled>페어 등록</button></div></div><div class="section-heading prep-list-heading"><h3>등록된 페어 <span id="prep-pair-count">0조</span></h3><p>두 명 모두 참석한 페어에 적용합니다.</p></div><div id="prep-pairs" class="prep-pairs"></div><p class="prep-footnote">등록한 페어는 이 기기에 유지됩니다. 한 명이 불참하면 해당 모임에는 적용하지 않습니다.</p></details><details id="timing-settings" class="pair-settings"><summary><span>경기 순서</span><small id="timing-summary"></small></summary><p class="timing-note">경기 수와 휴식 간격을 먼저 맞추고, 선택은 가능한 범위에서 반영합니다. 이 모임에만 적용됩니다.</p><div id="timing-members" class="timing-members"></div></details><div class="builder-bottom"><p>그날 참석 인원·모임 시간에 맞춰 자동 배정.<br>1인 최소 2경기 · 경기 수 차이는 최대 1경기.</p><button id="generate" class="primary">대진 만들기 <span>↗</span></button></div></div>
 <div id="schedule-content"></div></section>
-<section id="ranking-view" hidden><div class="section-heading"><div><h2>우리의 스코어보드</h2><p>승점은 쌓이고, 기록은 남고.</p></div><label class="period-control"><span>조회 기간</span><select id="period"></select></label></div><div class="personal-tabs record-mode-tabs" role="group" aria-label="조회할 기록"><button data-record-mode="live" aria-pressed="true">경기 기록</button><button data-record-mode="archive" aria-pressed="false">이전 집계</button></div><div id="live-records"><div class="record-filters"><div id="custom-range" class="custom-range" hidden><label>시작일<input id="range-start" type="date" value="${rangeStart}"></label><label>종료일<input id="range-end" type="date" value="${rangeEnd}"></label><button id="apply-range" class="secondary">기간 적용</button><p id="range-error" role="alert"></p></div><div class="record-search"><label class="sr-only" for="record-search">회원·게스트 이름 검색</label><input id="record-search" type="search" placeholder="회원·게스트 이름 검색" autocomplete="off"><button id="clear-record-search" class="text-button" aria-label="이름 검색 지우기" hidden>지우기</button></div><p id="search-results" role="status"></p></div><div id="ranking-summary" class="summary-grid"></div><div class="rank-panel"><div class="panel-top"><h3 id="ranking-title"></h3><button id="export-csv" class="text-button">CSV 내려받기 ↓</button></div><p class="table-scroll-hint">좌우로 넘겨 전체 기록을 확인하세요.</p><div class="table-scroll" role="region" aria-label="개인 순위표" tabindex="0"><table><caption class="sr-only">GDR 개인 순위</caption><thead><tr><th>순위</th><th>이름</th><th>승점</th><th>경기</th><th>승</th><th>무</th><th>패</th><th>승률</th><th>득</th><th>실</th><th>득실차</th></tr></thead><tbody id="rankings"></tbody></table></div><p class="table-note">승 3점 · 무 1점 · 패 0점 / 같은 승점은 공동순위 / 승률 = 승 ÷ 전체 경기</p></div><div class="record-image-tools"><div><h3>기록 이미지 2장</h3><p id="record-image-note">당일 결과와 하반기 누적 순위를 함께 보관하세요.</p></div><div class="record-image-controls"><label><span>누적 순위 기간</span><select id="stats-period"></select></label><label><span>당일 결과 날짜</span><select id="stats-date"></select></label><button id="export-record-images" class="secondary" disabled>두 장 저장·공유</button></div></div><div class="section-heading history-head"><h3>경기 기록</h3><label class="sr-only" for="player-filter">선수</label><select id="player-filter"><option value="">전체 멤버</option>${players.map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join('')}</select></div><div id="history"></div></div><div id="archive-records" hidden></div></section>
+<section id="ranking-view" hidden><div class="section-heading"><div><h2>우리의 스코어보드</h2><p>승점은 쌓이고, 기록은 남고.</p></div><label class="period-control"><span>조회 기간</span><select id="period"></select></label></div><div class="personal-tabs record-mode-tabs" role="group" aria-label="조회할 기록"><button data-record-mode="live" aria-pressed="true">경기 기록</button><button data-record-mode="archive" aria-pressed="false">이전 집계</button></div><div id="live-records"><div class="record-filters"><div id="custom-range" class="custom-range" hidden><label>시작일<input id="range-start" type="date" value="${rangeStart}"></label><label>종료일<input id="range-end" type="date" value="${rangeEnd}"></label><button id="apply-range" class="secondary">기간 적용</button><p id="range-error" role="alert"></p></div><div class="record-search"><label class="sr-only" for="record-search">회원·게스트 이름 검색</label><input id="record-search" type="search" placeholder="회원·게스트 이름 검색" autocomplete="off"><button id="clear-record-search" class="text-button" aria-label="이름 검색 지우기" hidden>지우기</button></div><p id="search-results" role="status"></p></div><div id="ranking-summary" class="summary-grid"></div><div class="rank-panel"><div class="panel-top"><h3 id="ranking-title"></h3><button id="export-csv" class="text-button">CSV 내려받기 ↓</button></div><p id="ranking-source-note" class="hint" hidden></p><p class="table-scroll-hint">좌우로 넘겨 전체 기록을 확인하세요.</p><div class="table-scroll" role="region" aria-label="개인 순위표" tabindex="0"><table><caption class="sr-only">GDR 개인 순위</caption><thead><tr><th>순위</th><th>이름</th><th>승점</th><th>경기</th><th>승</th><th>무</th><th>패</th><th>승률</th><th>득</th><th>실</th><th>득실차</th></tr></thead><tbody id="rankings"></tbody></table></div><p class="table-note">승 3점 · 무 1점 · 패 0점 / 같은 승점은 공동순위 / 승률 = 승 ÷ 전체 경기</p></div><div class="record-image-tools"><div><h3 id="record-image-heading">기록 이미지</h3><p id="record-image-note">당일 결과와 하반기 누적 순위를 함께 보관하세요.</p></div><div class="record-image-controls"><label><span>누적 순위 기간</span><select id="stats-period"></select></label><label><span>이미지 기준일</span><select id="stats-date"></select></label><button id="export-record-images" class="secondary" disabled>두 장 저장·공유</button></div></div><div class="section-heading history-head"><h3>경기 기록</h3><label class="sr-only" for="player-filter">선수</label><select id="player-filter"><option value="">전체 멤버</option>${players.map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join('')}</select></div><div id="history"></div></div><div id="archive-records" hidden></div></section>
 <section id="personal-view" hidden></section>
 <section id="members-view" hidden><div class="section-heading"><div><h2>우리 클럽 멤버</h2><p id="member-summary"></p></div><label class="period-control"><span>멤버 보기</span><select id="member-period"><option value="all">전체 멤버 ${players.length}명</option>${periods.map(period => `<option value="${period.id}">${period.label} ${period.memberIds.length}명</option>`).join('')}</select></label></div><div class="gender-legend"><span><i class="male-dot"></i>남성</span><span><i class="female-dot"></i>여성</span></div><div class="member-grid" id="member-grid"></div><div class="backup-panel"><div><h3>기록 보관</h3><p>${firebaseConfigured ? '공유 DB의 대진과 점수를 백업 파일로 보관할 수 있습니다.' : '로컬 기록은 이 브라우저에 저장됩니다. 백업 파일로 보관해 주세요.'}</p></div><div class="backup-actions"><button id="backup" class="secondary">백업 내려받기</button>${!firebaseConfigured ? '<label class="secondary file-label">백업 가져오기<input id="import" type="file" accept="application/json,.json"></label>' : ''}</div></div></section>
 <footer><span>GDR TENNIS CLUB</span><span>매 경기, 함께 쌓는 기록.</span></footer></main><div id="toast" role="status" aria-live="polite" hidden></div>`;
@@ -79,6 +80,14 @@ function renderAttendees() {
   $('#add-guest').disabled = !members.length || Object.keys(guests).length >= GUEST_IDS.length;
   $('#guests').innerHTML = Object.entries(guests).map(([id, guest]) => `<div class="guest-entry"><label class="player-chip guest ${selected.has(id) ? 'checked' : ''}"><input type="checkbox" value="${id}" ${selected.has(id) ? 'checked' : ''}><span>${esc(guest.name)}</span><span class="checkmark">✓</span></label><button data-remove-guest="${id}" class="text-button" aria-label="${esc(guest.name)} 게스트 삭제">삭제</button></div>`).join('');
   renderPrep();
+  renderTiming();
+}
+function renderTiming() {
+  const labels = sessionNames({ guests }, names);
+  const ids = [...selected].sort((a, b) => labels[a].localeCompare(labels[b], 'ko'));
+  const chosen = ids.filter(id => timingPreferences[id]).length;
+  $('#timing-summary').textContent = chosen ? `${chosen}명 선택` : '선택 사항';
+  $('#timing-members').innerHTML = ids.map(id => `<label class="timing-member"><span>${esc(labels[id])}</span><select data-timing="${id}" aria-label="${esc(labels[id])} 경기 순서"><option value="auto" ${!timingPreferences[id] ? 'selected' : ''}>자동</option><option value="early" ${timingPreferences[id] === 'early' ? 'selected' : ''}>먼저 마무리</option><option value="late" ${timingPreferences[id] === 'late' ? 'selected' : ''}>나중에 시작</option></select></label>`).join('') || '<p class="hint">참석 멤버를 먼저 선택해 주세요.</p>';
 }
 function renderMembers() {
   const members = membersForPeriod(memberPeriod, players, periods, state.sessions);
@@ -88,6 +97,7 @@ function renderMembers() {
 }
 function setMeetingDate(value) {
   const priorQuarter = quarter(date);
+  if (date !== value) timingPreferences = {};
   date = value;
   const members = membersForPeriod(date, players, periods, state.sessions).map(p => p.id);
   guests = structuredClone(state.sessions[date]?.guests || {});
@@ -135,14 +145,14 @@ function selectedPeriod() { return filter === 'custom' ? { start: rangeStart, en
 function scopedRecords() { return recordsFrom(state).filter(r => withinPeriod(selectedPeriod(), r.date)); }
 function scopedPlayers(value = selectedPeriod()) {
   const ids = new Set(membersForPeriod(value, players, periods, state.sessions).map(player => player.id));
-  for (const row of datedHistory(historySets, value, recordsFrom(state))) ids.add(row.playerId);
+  for (const row of [...datedHistory(historySets, value, recordsFrom(state)), ...baselineHistory(historySets, value)]) ids.add(row.playerId);
   return historicalPlayers(historySets, players).filter(player => ids.has(player.id));
 }
 function renderRanking() {
   const years = [...new Set([koreaToday().slice(0, 4), ...Object.keys(state.sessions).map(date => date.slice(0, 4)), ...historySets.filter(set => set.datePrecision === 'day' && set.cutoff).map(set => set.cutoff.slice(0, 4)), ...periods.map(p => p.id.slice(0, 4)), ...(baseline.sourcePeriod ? [baseline.sourcePeriod.slice(0, 4)] : [])])];
   const values = years.flatMap(year => [1, 2, 3, 4].map(q => `${year}-Q${q}`)).sort().reverse();
   const halves = years.flatMap(year => [2, 1].map(half => `${year}-H${half}`)).sort().reverse();
-  $('#period').innerHTML = `<option value="all">전체 날짜별 기록</option><option value="custom">기간 직접 선택</option><optgroup label="반기별">${halves.map(v => `<option value="${v}">${periodLabel(v)}</option>`).join('')}</optgroup><optgroup label="분기별">${values.map(v => `<option value="${v}">${periodLabel(v)}</option>`).join('')}</optgroup><optgroup label="모임별">${[...new Set([...Object.keys(state.sessions), ...datedHistory(historySets).map(row => row.date)])].sort().reverse().map(d => `<option value="${d}">${d}</option>`).join('')}</optgroup>`;
+  $('#period').innerHTML = `<option value="all">전체 기록</option><option value="custom">기간 직접 선택</option><optgroup label="반기별">${halves.map(v => `<option value="${v}">${periodLabel(v)}</option>`).join('')}</optgroup><optgroup label="분기별">${values.map(v => `<option value="${v}">${periodLabel(v)}</option>`).join('')}</optgroup><optgroup label="모임별">${[...new Set([...Object.keys(state.sessions), ...datedHistory(historySets).map(row => row.date)])].sort().reverse().map(d => `<option value="${d}">${d}</option>`).join('')}</optgroup>`;
   $('#period').value = filter;
   $('#custom-range').hidden = filter !== 'custom';
   $('#clear-record-search').hidden = !search;
@@ -152,12 +162,15 @@ function renderRanking() {
   $('#stats-period').innerHTML = `<optgroup label="반기별">${halves.map(v => `<option value="${v}">${periodLabel(v)}</option>`).join('')}</optgroup><optgroup label="분기별">${values.map(v => `<option value="${v}">${periodLabel(v)}</option>`).join('')}</optgroup>`;
   $('#stats-period').value = imagePeriod;
   const previousDate = $('#stats-date').value;
-  const imageDates = hasSnapshot ? [...new Set([...recordsFrom(state).filter(record => withinPeriod(imagePeriod, record.date)).map(record => record.date), ...datedHistory(historySets, imagePeriod, recordsFrom(state)).map(row => row.date)])].sort().reverse() : [];
+  const imageDates = hasSnapshot ? [...new Set([...recordsFrom(state).filter(record => withinPeriod(imagePeriod, record.date)).map(record => record.date), ...datedHistory(historySets, imagePeriod, recordsFrom(state)).map(row => row.date), ...baselineHistory(historySets, imagePeriod).map(row => row.date)])].sort().reverse() : [];
   $('#stats-date').innerHTML = imageDates.length ? imageDates.map(value => `<option value="${value}">${value}</option>`).join('') : '<option value="">완료 기록 없음</option>';
   $('#stats-date').value = imageDates.includes(previousDate) ? previousDate : imageDates.includes(date) ? date : imageDates[0] || '';
   $('#stats-date').disabled = !imageDates.length;
   $('#export-record-images').disabled = !imageDates.length;
-  $('#record-image-note').textContent = imageDates.length ? `당일 결과 + ${periodLabel(imagePeriod)} 누적 순위 · 선택한 날짜까지의 기록을 이미지 2장으로 저장·공유합니다.` : `${periodLabel(imagePeriod)}에 저장된 날짜별 기록이 없습니다. 다른 기간을 선택해 주세요.`;
+  const imageHasDaily = recordsFrom(state).some(record => record.date === $('#stats-date').value) || datedHistory(historySets, $('#stats-date').value, recordsFrom(state)).length > 0;
+  $('#export-record-images').textContent = imageHasDaily ? '두 장 저장·공유' : '누적 순위 저장·공유';
+  $('#record-image-heading').textContent = `기록 이미지 ${imageHasDaily ? '2장' : '1장'}`;
+  $('#record-image-note').textContent = imageDates.length ? `${imageHasDaily ? '당일 결과 + ' : ''}${periodLabel(imagePeriod)} 누적 순위 · 선택한 날짜까지의 기록을 이미지 ${imageHasDaily ? '2장' : '1장'}으로 저장·공유합니다.` : `${periodLabel(imagePeriod)}에 저장된 날짜별 기록이 없습니다. 다른 기간을 선택해 주세요.`;
   if (!hasSnapshot) {
     $('#ranking-title').textContent = `${periodLabel(selectedPeriod())} 순위`;
     $('#ranking-summary').innerHTML = '';
@@ -168,16 +181,20 @@ function renderRanking() {
     return;
   }
   $('#export-csv').disabled = false;
+  const baselines = baselineHistory(historySets, selectedPeriod()), hasAggregate = baselines.length > 0 || datedHistory(historySets, selectedPeriod(), recordsFrom(state)).length > 0;
+  $('#ranking-source-note').hidden = !baselines.length;
+  $('#ranking-source-note').textContent = baselines.length ? `마감 집계(${[...new Set(baselines.map(row => row.date))].join(' · ')})와 이후 경기를 합산합니다. 집계에 포함된 경기는 다시 더하지 않습니다.` : '';
   const records = scopedRecords(), allRows = rankingWithHistory(recordsFrom(state), members, selectedPeriod(), historySets), rows = allRows.filter(player => matchesPlayer(player, search)), participating = allRows.filter(r => r.games).length;
   $('#ranking-title').textContent = `${periodLabel(selectedPeriod())} 순위`;
-  $('#ranking-summary').innerHTML = [[datedHistory(historySets, selectedPeriod(), recordsFrom(state)).length ? '개인 경기 수' : '완료 경기', datedHistory(historySets, selectedPeriod(), recordsFrom(state)).length ? allRows.reduce((sum, row) => sum + row.games, 0) : records.length, '경기'], ['기록된 모임', new Set([...records.map(r => r.date), ...datedHistory(historySets, selectedPeriod(), recordsFrom(state)).map(row => row.date)]).size, '회'], ['경기한 멤버', participating, '명']].map(([label, n, unit]) => `<div><span>${label}</span><strong>${n}<small>${unit}</small></strong></div>`).join('');
+  $('#ranking-summary').innerHTML = [[hasAggregate ? '개인 경기 수' : '완료 경기', hasAggregate ? allRows.reduce((sum, row) => sum + row.games, 0) : records.length, '경기'], ['상세 기록 모임', new Set([...records.map(r => r.date), ...datedHistory(historySets, selectedPeriod(), recordsFrom(state)).map(row => row.date)]).size, '회'], ['경기한 멤버', participating, '명']].map(([label, n, unit]) => `<div><span>${label}</span><strong>${n}<small>${unit}</small></strong></div>`).join('');
   $('#rankings').innerHTML = rows.map(r => `<tr class="${r.rank === 1 ? 'first' : ''}"><td>${r.rank ?? '—'}</td><td><button class="name-button" data-player="${r.id}">${esc(r.name)}</button>${r.historyReview ? '<span class="rank-review" title="이전 자료에 확인할 항목이 있습니다">확인</span>' : ''}</td><td class="points">${r.points}</td><td>${r.games}</td><td>${r.wins}</td><td>${r.draws}</td><td>${r.losses}</td><td>${r.winRate === null ? '—' : r.winRate + '%'}</td><td>${r.scored}</td><td>${r.conceded}</td><td>${r.difference > 0 ? '+' : ''}${r.difference}</td></tr>`).join('') || `<tr><td colspan="11">${search ? '검색 결과가 없습니다.' : '이 기간의 멤버 명단과 기록이 아직 없습니다.'}</td></tr>`;
   const oldRows = datedHistory(historySets, selectedPeriod(), recordsFrom(state)).filter(row => (!playerFilter || row.playerId === playerFilter) && matchesPlayer(historicalPlayers(historySets, players).find(player => player.id === row.playerId), search));
   const games = records.filter(r => (!playerFilter || [...r.teamA, ...r.teamB].includes(playerFilter)) && matchesRecord(r, players, search)).sort((a, b) => b.date.localeCompare(a.date) || a.round - b.round || a.court - b.court);
   $('#search-results').textContent = search ? `이름 검색 결과 · 회원 ${rows.length}명 · 경기 ${games.length}건${oldRows.length ? ` · 이전 집계 ${oldRows.length}건` : ''}` : '';
   $('#player-filter').value = playerFilter;
   $('#history').innerHTML = games.length ? games.map(r => `<article class="history-card"><span>${r.date} · ${r.round}라운드 · ${courtName(r.court)} 코트</span><div>${team(r.teamA, r.guests)} <strong>${r.scoreA} : ${r.scoreB}</strong> ${team(r.teamB, r.guests)}</div><button class="text-button" data-open-date="${r.date}">대진표 보기 →</button></article>`).join('') : `<div class="empty compact"><h3>${search || playerFilter ? '검색에 맞는 경기 결과가 없습니다.' : '아직 저장된 경기 결과가 없어요.'}</h3><p>${search || playerFilter ? '이름 검색이나 선수·조회 기간을 바꿔 주세요.' : '대진표에서 점수를 저장하면 순위와 기록이 반영됩니다.'}</p></div>`;
-  if (oldRows.length && !games.length) $('#history').innerHTML = '';
+  if ((oldRows.length || baselines.length) && !games.length) $('#history').innerHTML = '';
+  if (baselines.length) $('#history').insertAdjacentHTML('afterbegin', `<article class="history-card"><span>기간 마감 집계 · 실제 경기 내역 없는 과거 기록</span><div>${[...new Set(baselines.map(row => row.sourceId))].map(id => `<button class="text-button" data-history-detail="${esc(id)}" data-history-member="${baselines.find(row => row.sourceId === id).playerId}">${esc(historySets.find(set => set.id === id)?.title || id)} 원본 보기 →</button>`).join('')}</div></article>`);
   if (oldRows.length) $('#history').insertAdjacentHTML('afterbegin', `<details class="historical-daily-list"><summary>이전 날짜별 개인 기록 ${oldRows.length}건 보기</summary><p class="hint">승점·경기 수·득실차는 승무패·득실에서 계산합니다.</p>${oldRows.sort((a, b) => b.date.localeCompare(a.date) || a.name.localeCompare(b.name, 'ko')).map(row => `<article class="history-card"><span>${row.date} · 이전 개인 집계${row.review ? ' · 원본 확인 항목 있음' : ''}</span><div><strong>${esc(historicalPlayers(historySets, players).find(player => player.id === row.playerId)?.name || row.name)}</strong> ${row.wins}승 ${row.draws}무 ${row.losses}패 · 승점 ${row.points}</div><button class="text-button" data-history-detail="${esc(row.sourceId)}" data-history-member="${row.playerId}">원본 보기 →</button></article>`).join('')}</details>`);
 }
 function renderPrep() {
@@ -217,7 +234,8 @@ function build(quotas) {
   quotas ??= allocateForWindow(ids, windowRounds, activePairs);
   const strengths = strengthsForSession(recordsFrom(state), players.map(p => p.id), baseline, date, historySets);
   for (const id of ids) if (Object.hasOwn(guests, id)) strengths[id] = GUEST_STRENGTH;
-  const result = generateSchedule(ids, quotas, { strengths, lockedPairs: activePairs });
+  const preferences = Object.fromEntries(Object.entries(timingPreferences).filter(([id]) => selected.has(id)));
+  const result = generateSchedule(ids, quotas, { strengths, lockedPairs: activePairs, timingPreferences: preferences });
   if (Math.max(...Object.values(result.matchMap).map(m => m.round)) > windowRounds) throw new Error('조정한 경기 수를 모임 시간 안에 배정할 수 없습니다. 종료 시간을 늘리거나 경기 수를 줄여 주세요.');
   const profiles = Object.fromEntries(Object.entries(guests).filter(([id]) => selected.has(id)));
   draft = { schemaVersion: 1, date, participantIds: ids, fixedPlayerIds: ids.filter(id => Object.hasOwn(names, id)), ...(Object.keys(profiles).length ? { guests: profiles } : {}), startTime, roundMinutes, endTime, matchMap: result.matchMap, partnerRepeats: result.partnerRepeats, lockedPairs: activePairs };
@@ -248,7 +266,7 @@ $('#app').addEventListener('click', async event => {
     }
     else if (button.id === 'add-guest') { $('#guest-editor').hidden = false; button.setAttribute('aria-expanded', 'true'); $('#guest-name').focus(); }
     else if (button.id === 'cancel-guest') { $('#guest-editor').hidden = true; $('#add-guest').setAttribute('aria-expanded', 'false'); $('#guest-name').value = ''; $('#add-guest').focus(); }
-    else if (button.dataset.removeGuest) { const id = button.dataset.removeGuest; delete guests[id]; selected.delete(id); draft = null; renderAttendees(); renderSchedule(); }
+    else if (button.dataset.removeGuest) { const id = button.dataset.removeGuest; delete guests[id]; delete timingPreferences[id]; selected.delete(id); draft = null; renderAttendees(); renderSchedule(); }
     else if (button.dataset.meetingTime) {
       [startTime, endTime] = button.dataset.meetingTime.split('/');
       syncMeetingTimes(); draft = null; renderSchedule();
@@ -293,7 +311,12 @@ $('#app').addEventListener('click', async event => {
 });
 $('#app').addEventListener('change', async event => {
   const input = event.target;
-  if (input.dataset.quota) {
+  if (input.dataset.timing) {
+    if (input.value === 'auto') delete timingPreferences[input.dataset.timing];
+    else timingPreferences[input.dataset.timing] = input.value;
+    draft = null; renderTiming(); renderSchedule();
+  }
+  else if (input.dataset.quota) {
     const pair = draft?.lockedPairs?.find(pair => pair.includes(input.dataset.quota));
     const partner = pair?.find(id => id !== input.dataset.quota);
     const control = partner && document.querySelector(`[data-quota="${partner}"]`);
@@ -306,6 +329,7 @@ $('#app').addEventListener('change', async event => {
   else if (input.id === 'date') { setMeetingDate(input.value); }
   else if (['start', 'end'].includes(input.id)) { startTime = $('#start').value; endTime = $('#end').value; syncMeetingTimes(); draft = null; renderSchedule(); }
   else if (input.id === 'period') { filter = input.value; $('#range-error').textContent = ''; renderRanking(); }
+  else if (input.id === 'stats-date') { renderRanking(); }
   else if (input.id === 'stats-period') { imagePeriod = input.value; renderRanking(); }
   else if (input.id === 'player-filter') { playerFilter = input.value; renderRanking(); }
   else if (input.id === 'member-period') { memberPeriod = input.value; renderMembers(); }

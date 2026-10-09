@@ -1,5 +1,5 @@
 import { validResult } from './model.js';
-import { datedHistory, rankingWithHistory } from './history-stats.js';
+import { baselineHistory, datedHistory, rankingWithHistory } from './history-stats.js';
 import { withinPeriod, periodLabel } from './periods.js';
 import { openImagePages } from './schedule-image.js';
 
@@ -7,15 +7,17 @@ export function recordImagePages(records, players, value, date, history = []) {
   const scoped = records.filter(record => validResult(record) && withinPeriod(value, record.date));
   const daily = scoped.filter(record => record.date === date);
   if (!withinPeriod(value, date)) throw new Error('선택한 기간 안의 모임 날짜를 선택해 주세요.');
-  if (!daily.length && !datedHistory(history, date, records).length) throw new Error('선택한 기간 안에서 점수가 입력된 모임을 선택해 주세요.');
+  const hasDaily = daily.length || datedHistory(history, date, records).length;
+  const availableHistory = history.filter(set => !set.cutoff || set.cutoff <= date);
+  const baselines = baselineHistory(availableHistory, value);
+  if (!hasDaily && !baselines.length) throw new Error('선택한 기간 안에서 점수가 입력된 모임을 선택해 주세요.');
   const cumulative = scoped.filter(record => record.date <= date);
   const asOf = date;
   const key = typeof value === 'object' ? `${value.start}_${value.end}` : value;
   const rows = (input, period) => rankingWithHistory(input, players, period, history.filter(set => !set.cutoff || set.cutoff <= date)).filter(player => player.games).map(({ id, name, shortName, rank, games, wins, draws, losses, points, scored, conceded, difference, winRate }) => ({ id, name: shortName || name, rank, games, wins, draws, losses, points, scored, conceded, difference, winRate }));
-  return [
-    { kind: 'daily', label: '당일 결과', title: `GDR ${date} 당일 결과`, date, asOf: date, rows: rows(daily, date), filename: `GDR-${date}-results.png` },
-    { kind: 'cumulative', label: '누적 순위', title: `GDR ${periodLabel(value)} 순위`, date, asOf, rows: rows(cumulative, value), filename: `GDR-${key}-ranking-${asOf}.png` },
-  ];
+  const pages = [{ kind: 'cumulative', label: '누적 순위', title: `GDR ${periodLabel(value)} 순위`, date, asOf, rows: rows(cumulative, value), filename: `GDR-${key}-ranking-${asOf}.png`, sourceNote: baselines.length ? '기간 마감 집계 + 이후 경기 · 집계 내 기록 중복 제외' : '실제 경기·날짜별 개인 집계 기준 · 게스트는 회원 순위에서 제외' }];
+  if (hasDaily) pages.unshift({ kind: 'daily', label: '당일 결과', title: `GDR ${date} 당일 결과`, date, asOf: date, rows: rows(daily, date), filename: `GDR-${date}-results.png` });
+  return pages;
 }
 
 export async function renderRecordImage(page) {
@@ -53,7 +55,7 @@ export async function renderRecordImage(page) {
     }
   });
   text('승 3점 · 무 1점 · 패 0점 / 같은 승점은 공동순위', width / 2, height - 65, 23, '#77837a');
-  text('실제 경기·날짜별 개인 집계 기준 · 게스트는 회원 순위에서 제외', width / 2, height - 29, 22, '#77837a');
+  text(page.sourceNote || '실제 경기·날짜별 개인 집계 기준 · 게스트는 회원 순위에서 제외', width / 2, height - 29, 22, '#77837a');
   const blob = await new Promise((resolve, reject) => canvas.toBlob(blob => blob ? resolve(blob) : reject(new Error('이미지 생성에 실패했습니다.')), 'image/png'));
   canvas.width = 1; canvas.height = 1;
   return new File([blob], page.filename, { type: 'image/png' });
@@ -61,5 +63,5 @@ export async function renderRecordImage(page) {
 
 export async function openRecordImages(records, players, value, date, history = []) {
   const pages = recordImagePages(structuredClone(records), players, value, date, history);
-  return openImagePages(pages, renderRecordImage, '기록 이미지 2장', true);
+  return openImagePages(pages, renderRecordImage, `기록 이미지 ${pages.length}장`, true);
 }

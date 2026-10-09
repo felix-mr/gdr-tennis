@@ -5,6 +5,7 @@ import { toFirestoreValue, fromFirestoreValue } from './firestore-values.js';
 
 const option = key => process.argv[process.argv.indexOf(key) + 1];
 const path = process.argv.includes('--plan') ? option('--plan') : 'output/history/firestore-import-plan.json';
+const receiptPath = process.argv.includes('--receipt') ? option('--receipt') : 'output/history/firestore-import-receipt.json';
 const plan = JSON.parse(await readFile(path, 'utf8'));
 if (plan.projectId !== 'guldari' || plan.databaseId !== '(default)' || plan.documents.some(document => !document.path.startsWith('clubs/gdr/'))) throw new Error('Import target must be guldari/(default)/clubs/gdr.');
 if (new Set(plan.documents.map(document => document.path)).size !== plan.documents.length) throw new Error('Duplicate import paths.');
@@ -49,5 +50,5 @@ const verification = await Promise.all(plan.documents.map(async entry => {
   if (!isDeepStrictEqual(data, entry.data)) throw new Error(`Read-back mismatch: ${entry.path}`);
   return { path: entry.path, updateTime: raw.updateTime };
 }));
-await writeFile('output/history/firestore-import-receipt.json', JSON.stringify({ projectId: plan.projectId, contentDigest: plan.contentDigest, verifiedAt: new Date().toISOString(), created: updates.length, verified: verification }, null, 2));
+await writeFile(receiptPath, JSON.stringify({ projectId: plan.projectId, contentDigest: plan.contentDigest, verifiedAt: new Date().toISOString(), created: updates.length, verified: verification }, null, 2));
 console.log(JSON.stringify({ result: 'verified', created: updates.length, verified: verification.length }));
