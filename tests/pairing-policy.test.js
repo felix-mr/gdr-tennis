@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { generateSchedule } from '../src/scheduler.js';
-import { recentPairingHistory, STRENGTH_STEP, courtSeparationCost } from '../src/pairing-policy.js';
+import { recentPairingHistory, STRENGTH_STEP } from '../src/pairing-policy.js';
 
 const ids = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
 const strengths = Object.fromEntries(ids.map((id, index) => [id, index < 4 ? 0.9 : 0.1]));
@@ -12,17 +12,6 @@ const prior = date => ({ date, participantIds: ids, fixedPlayerIds: ids, matchMa
   'r2-c2': { round: 2, court: 2, teamA: ['b', 'f'], teamB: ['d', 'h'] },
 } });
 function seeded(seed) { return () => { seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0; return seed / 4294967296; }; }
-
-test('court similarity remains a bounded preference rather than requiring every team to have the same total', () => {
-  const value = id => strengths[id];
-  const sameCourts = ['a', 'b', 'e', 'f', 'c', 'd', 'g', 'h'];
-  const separated = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
-  const modest = ['a', 'b', 'c', 'e', 'd', 'f', 'g', 'h'];
-  assert.equal(courtSeparationCost(sameCourts, value), 0);
-  assert.ok(courtSeparationCost(separated, value) > courtSeparationCost(modest, value));
-  assert.ok(courtSeparationCost(separated, value) < 16);
-  assert.equal(courtSeparationCost(ids.slice(0, 4), value), 0);
-});
 
 test('recent pairing evidence excludes another half, future dates, duplicated days and reused guest identities', () => {
   const date = '2026-10-11', recent = prior('2026-10-04');
@@ -100,4 +89,21 @@ test('fresh three-hour draws do not converge on the same replacement partners af
   assert.ok(inclusion.every(count => count < draws * 0.85), `Replacement pair inclusions: ${inclusion}`);
   // These remain independent previews, never fictitious saved meetings.
   assert.equal(previousSchedules.length, 1);
+});
+
+test('low-total games and high-total games can coexist with mixed games without any saved history', () => {
+  const members = ['l1', 'l2', 'l3', 'l4', 'h1', 'h2', 'h3', 'h4'];
+  const values = [0.1, 0.2, 0.1, 0.3, 0.7, 0.8, 0.7, 0.9];
+  const strengths = Object.fromEntries(members.map((id, i) => [id, values[i]]));
+  const result = generateSchedule(members, Object.fromEntries(members.map(id => [id, 2])), { strengths, random: seeded(2026) });
+  const matches = Object.values(result.matchMap);
+  const low = matches.filter(match => [...match.teamA, ...match.teamB].every(id => strengths[id] <= 0.3));
+  assert.ok(low.length > 0);
+  const totals = [low[0].teamA, low[0].teamB].map(team => team.reduce((sum, id) => sum + strengths[id], 0)).sort();
+  assert.ok(Math.abs(totals[0] - 0.3) < 1e-9 && Math.abs(totals[1] - 0.4) < 1e-9);
+  assert.ok(matches.some(match => [...match.teamA, ...match.teamB].every(id => strengths[id] >= 0.7)));
+  assert.ok(matches.some(match => [...match.teamA, ...match.teamB].some(id => strengths[id] <= 0.3) && [...match.teamA, ...match.teamB].some(id => strengths[id] >= 0.7)));
+  assert.equal(result.consecutiveRests, 0);
+  assert.equal(result.partnerRepeats, 0);
+  assert.ok(result.balance.maxGap / STRENGTH_STEP <= 2 + 1e-8);
 });

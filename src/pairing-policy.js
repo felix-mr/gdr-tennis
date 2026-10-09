@@ -5,11 +5,13 @@ export const STRENGTH_STEP = 0.8 / 6;
 export const TEAM_GAP_ALLOWANCE = 2 * STRENGTH_STEP;
 export const pairKey = (a, b) => [a, b].sort().join('|');
 
-export function courtSeparationCost(shuffled, strength) {
-  if (shuffled.length < 8) return 0;
-  const total = ids => ids.reduce((sum, id) => sum + strength(id), 0);
-  const gap = Math.abs(total(shuffled.slice(0, 4)) - total(shuffled.slice(4, 8))) / (2 * STRENGTH_STEP);
-  return 12 * gap ** 2 / (gap ** 2 + 16);
+// Equal team sums can still repeatedly pair the strongest with the weakest.
+// Prefer nearby individuals as another option, without fixing membership bands
+// or imposing a quota of similar-level games. Opposing team gaps stay separate.
+export function matchSpreadCost(four, strength) {
+  const values = four.map(strength);
+  const spread = (Math.max(...values) - Math.min(...values)) / STRENGTH_STEP;
+  return 80 * spread ** 2 / (spread ** 2 + 4);
 }
 
 export function recentPairingHistory(schedules, date, ids) {

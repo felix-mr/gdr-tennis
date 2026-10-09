@@ -1,5 +1,5 @@
 import { MAX_ROUNDS } from './model.js';
-import { STRENGTH_STEP, TEAM_GAP_ALLOWANCE, pairKey, recentPairingHistory, nearbyPairing, courtSeparationCost } from './pairing-policy.js';
+import { STRENGTH_STEP, TEAM_GAP_ALLOWANCE, pairKey, recentPairingHistory, nearbyPairing, matchSpreadCost } from './pairing-policy.js';
 // Retained for old fixed-target schedules. New schedules use the meeting window.
 export function allocateGames(ids, target, totals = {}) {
   if (ids.length < 4 || new Set(ids).size !== ids.length) throw new Error('참가자 4명 이상을 중복 없이 선택해 주세요.');
@@ -71,12 +71,13 @@ export function generateSchedule(ids, quotas, { random = Math.random, attempts =
         for (let i = 0; i < shuffled.length; i += 4) {
           const strengthA = strength(shuffled[i]) + strength(shuffled[i + 1]);
           const strengthB = strength(shuffled[i + 2]) + strength(shuffled[i + 3]);
+          penalty += matchSpreadCost(shuffled.slice(i, i + 4), strength);
           gapCost += (Math.max(0, Math.abs(strengthA - strengthB) - TEAM_GAP_ALLOWANCE) / STRENGTH_STEP) ** 2;
           severeCost += Math.max(0, Math.abs(strengthA - strengthB) / STRENGTH_STEP - 4) ** 2;
           for (const team of [shuffled.slice(i, i + 2), shuffled.slice(i + 2, i + 4)]) { const key = pairKey(...team); if (!fixedKeys.has(key)) penalty += (partners[key] || 0) * 100 + 16 * (history.partners[key] || 0) + drawPartnerCosts[key]; for (const id of team) if (preferred[id] && !team.includes(preferred[id])) penalty += 250; }
           for (const a of shuffled.slice(i, i + 2)) for (const b of shuffled.slice(i + 2, i + 4)) { const key = pairKey(a, b); penalty += (opponents[key] || 0) * 4 + 6 * (history.opponents[key] || 0); }
         }
-        penalty += 600 * gapCost + 2 * courtSeparationCost(shuffled, strength);
+        penalty += 600 * gapCost;
         if (!pairing || severeCost < pairing.severeCost - 1e-9 || (Math.abs(severeCost - pairing.severeCost) <= 1e-9 && penalty < pairing.penalty)) pairing = { shuffled, penalty, gapCost, severeCost };
       }
       cost += pairing.penalty;
@@ -106,7 +107,15 @@ export function generateSchedule(ids, quotas, { random = Math.random, attempts =
         if (timingPreferences[id] === 'early') cost += (lastActive[id] - 1) * 10;
         if (timingPreferences[id] === 'late') cost += (rounds - firstActive[id]) * 10;
       }
-      if (!best || consecutiveRests < best.consecutiveRests || (consecutiveRests === best.consecutiveRests && (severeGap < best.severeGap - 1e-9 || (Math.abs(severeGap - best.severeGap) <= 1e-9 && cost < best.cost)))) best = { matchMap, cost, excessGap, severeGap, consecutiveRests, partnerRepeats: Object.entries(partners).filter(([key]) => !fixedKeys.has(key)).reduce((s, [, n]) => s + Math.max(0, n - 1), 0) };
+      const partnerRepeats = Object.entries(partners).filter(([key]) => !fixedKeys.has(key)).reduce((s, [, n]) => s + Math.max(0, n - 1), 0);
+      // Within a small allowance for continuously updated ratings, prefer no
+      // repeated partners over another similar-level game. Keep large matchup
+      // gaps and rest spacing ahead of that preference.
+      const qualityGap = Object.values(matchMap).reduce((sum, match) => sum + Math.max(0, Math.abs(match.teamA.reduce((s, id) => s + strength(id), 0) - match.teamB.reduce((s, id) => s + strength(id), 0)) / STRENGTH_STEP - 2.25) ** 2, 0);
+      const priorities = [consecutiveRests, severeGap, qualityGap, partnerRepeats, cost];
+      const previous = best && [best.consecutiveRests, best.severeGap, best.qualityGap, best.partnerRepeats, best.cost];
+      const different = previous && priorities.findIndex((value, index) => Math.abs(value - previous[index]) > 1e-9);
+      if (!best || (different !== -1 && priorities[different] < previous[different])) best = { matchMap, cost, excessGap, severeGap, qualityGap, consecutiveRests, partnerRepeats };
     }
   }
   if (!best && lockedPairs.length) return generateSchedule(ids, quotas, { random, attempts, strengths, preferredPairs: lockedPairs, timingPreferences, previousSchedules, meetingDate });

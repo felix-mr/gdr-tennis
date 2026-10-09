@@ -22,7 +22,11 @@ const initial = initialStrengths(allIds, baseline);
 const current = strengthsForSession(input.records, allIds, baseline, '2026-10-11', input.history);
 const versions = [{ name: 'new', generate: generateSchedule }];
 if (option('--compare-ref')) {
-  const source = execFileSync('git', ['show', `${option('--compare-ref')}:src/scheduler.js`], { encoding: 'utf8' }).replace("'./model.js'", JSON.stringify(pathToFileURL(process.cwd() + '/src/model.js').href)).replace("'./pairing-policy.js'", JSON.stringify(pathToFileURL(process.cwd() + '/src/pairing-policy.js').href));
+  let source = execFileSync('git', ['show', `${option('--compare-ref')}:src/scheduler.js`], { encoding: 'utf8' }).replace("'./model.js'", JSON.stringify(pathToFileURL(process.cwd() + '/src/model.js').href));
+  if (source.includes("'./pairing-policy.js'")) {
+    const policy = execFileSync('git', ['show', `${option('--compare-ref')}:src/pairing-policy.js`], { encoding: 'utf8' }).replace("'./model.js'", JSON.stringify(pathToFileURL(process.cwd() + '/src/model.js').href)).replace("'./periods.js'", JSON.stringify(pathToFileURL(process.cwd() + '/src/periods.js').href));
+    source = source.replace("'./pairing-policy.js'", JSON.stringify('data:text/javascript;base64,' + Buffer.from(policy).toString('base64')));
+  }
   versions.unshift({ name: option('--compare-ref'), generate: (await import('data:text/javascript;base64,' + Buffer.from(source).toString('base64'))).generateSchedule });
 }
 function seeded(seed) { return () => { seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0; return seed / 4294967296; }; }
@@ -38,7 +42,7 @@ const cases = [
 ];
 const report = { runs, mode, inputMatches: input.records.length, historySets: input.history.length, initial, current, sequence: mode === 'fresh' ? 'Repeated draws for 2026-10-11 against unchanged saved history; previews are never added to history.' : 'Independent blocks of 10 hypothetical weekly meetings within 2026 H2. Recent schedules reset between blocks.', cases: [] };
 for (const scenario of cases) for (const version of versions) {
-  const stats = {}, gaps = [], courtGaps = [], durations = [], cohorts = { top: 0, bottom: 0 };
+  const stats = {}, gaps = [], courtGaps = [], meetingCourtGaps = [], durations = [], cohorts = { top: 0, bottom: 0, upperSix: 0, lowerSix: 0, withinTwoSteps: 0 };
   let recent = [], rests = 0, partnerRepeats = 0;
   for (let sample = 0; sample < runs; sample++) {
     if (mode === 'fresh' || sample % 10 === 0) recent = Object.values(input.state.sessions);
@@ -83,6 +87,10 @@ for (const scenario of cases) for (const version of versions) {
       const active = [...match.teamA, ...match.teamB];
       if (active.every(id => baseline.groups.slice(0, 2).flat().includes(id))) cohorts.top++;
       if (active.every(id => baseline.groups.slice(-2).flat().includes(id))) cohorts.bottom++;
+      if (active.every(id => baseline.groups.slice(0, 3).flat().includes(id))) cohorts.upperSix++;
+      if (active.every(id => baseline.groups.slice(-3).flat().includes(id))) cohorts.lowerSix++;
+      const activeStrengths = active.map(id => strengths[id]);
+      if (Math.max(...activeStrengths) - Math.min(...activeStrengths) <= 2 * STRENGTH_STEP + 1e-8) cohorts.withinTwoSteps++;
       for (const pair of scenario.lockedPairs || []) if (active.includes(pair[0]) && ![match.teamA, match.teamB].some(team => pair.every(id => team.includes(id)))) throw new Error('Fixed pair changed.');
       for (const [team, other] of [[match.teamA, match.teamB], [match.teamB, match.teamA]]) for (const id of team) {
         const row = stats[id], partner = team.find(partner => partner !== id);
@@ -94,6 +102,8 @@ for (const scenario of cases) for (const version of versions) {
       const matches = Object.values(result.matchMap).filter(match => match.round === round);
       if (matches.length === 2) { const sum = match => [...match.teamA, ...match.teamB].reduce((value, id) => value + strengths[id], 0); courtGaps.push(Math.abs(sum(matches[0]) - sum(matches[1])) / (2 * STRENGTH_STEP)); }
     }
+    const courtTotals = [1, 2].map(court => Object.values(result.matchMap).filter(match => match.court === court).flatMap(match => [...match.teamA, ...match.teamB]).reduce((sum, id) => sum + strengths[id], 0));
+    meetingCourtGaps.push(Math.abs(courtTotals[0] - courtTotals[1]) / (2 * STRENGTH_STEP));
     if (mode === 'rolling') recent.push(session);
   }
   const mean = values => values.reduce((sum, value) => sum + value, 0) / values.length;
@@ -104,7 +114,7 @@ for (const scenario of cases) for (const version of versions) {
     const deviation = (counts, multiplier) => Math.sqrt(mean(expected.map(([other, value]) => ((counts[other] || 0) - multiplier * value) ** 2))) / mean(expected.map(([, value]) => multiplier * value));
     return { id, name: names[id] || id, games: row.games, meetings: row.meetings, uniquePartners: Object.keys(row.partners).length, maxPartnerPercent: pct(Math.max(...Object.values(row.partners))), partnerDrawPercent: Object.fromEntries(Object.entries(row.partnerDraws).map(([other, count]) => [other, +(100 * count / row.meetings).toFixed(1)])), maxOpponentPercent: pct(Math.max(...Object.values(row.opponents))) / 2, lowPartnerPercent: pct((row.partners.gdr010 || 0) + (row.partners.gdr011 || 0)), partnerDeviation: deviation(row.partners, 1), opponentDeviation: deviation(row.opponents, 2), partners: row.partners, opponents: row.opponents };
   });
-  const result = { scenario: scenario.name, version: version.name, matches: gaps.length, rests, partnerRepeats, cohorts, teamGap: { mean: mean(gaps), p95: percentile(gaps, 0.95), max: Math.max(...gaps), above2Percent: 100 * gaps.filter(gap => gap > 2 + 1e-8).length / gaps.length, above3Percent: 100 * gaps.filter(gap => gap > 3 + 1e-8).length / gaps.length, above4Percent: 100 * gaps.filter(gap => gap > 4 + 1e-8).length / gaps.length }, courtGapMean: mean(courtGaps), partnerDeviationMean: mean(rows.map(row => row.partnerDeviation)), opponentDeviationMean: mean(rows.map(row => row.opponentDeviation)), durationMs: { mean: mean(durations), p95: percentile(durations, 0.95) }, players: rows };
+  const result = { scenario: scenario.name, version: version.name, matches: gaps.length, rests, partnerRepeats, cohorts, teamGap: { mean: mean(gaps), p95: percentile(gaps, 0.95), max: Math.max(...gaps), above2Percent: 100 * gaps.filter(gap => gap > 2 + 1e-8).length / gaps.length, above3Percent: 100 * gaps.filter(gap => gap > 3 + 1e-8).length / gaps.length, above4Percent: 100 * gaps.filter(gap => gap > 4 + 1e-8).length / gaps.length }, courtGapMean: mean(courtGaps), meetingCourtGap: { mean: mean(meetingCourtGaps), max: Math.max(...meetingCourtGaps) }, partnerDeviationMean: mean(rows.map(row => row.partnerDeviation)), opponentDeviationMean: mean(rows.map(row => row.opponentDeviation)), durationMs: { mean: mean(durations), p95: percentile(durations, 0.95) }, players: rows };
   report.cases.push(result);
   console.log(JSON.stringify({ ...result, players: rows.filter(row => ['gdr001', 'gdr002'].includes(row.id)) }));
 }
