@@ -74,3 +74,30 @@ test('fixed preparation pairs survive conflicting rotation history and unlike ra
   for (const match of Object.values(result.matchMap)) for (const team of [match.teamA, match.teamB]) assert.ok(lockedPairs.some(pair => pair.every(id => team.includes(id))));
   assert.equal(result.balance.maxGap, 0);
 });
+
+test('fresh three-hour draws do not converge on the same replacement partners after one saved meeting', () => {
+  const members = Array.from({ length: 14 }, (_, i) => `p${String(i).padStart(2, '0')}`);
+  // Small result-based adjustments make the two initially equal players differ.
+  // The saved-history avoidance must not funnel them into one replacement pair.
+  const values = [0.907, 0.901, 0.627, 0.773, 0.769, 0.367, 0.359, 0.233, 0.502, 0.094, 0.100, 0.633, 0.498, 0.233];
+  const strengths = Object.fromEntries(members.map((id, i) => [id, values[i]]));
+  const matches = [[3, 2, 8, 1], [9, 5, 6, 10], [0, 5, 1, 6], [3, 8, 11, 2], [10, 0, 9, 1], [2, 6, 5, 11], [0, 6, 11, 8], [9, 3, 10, 2]];
+  const participantIds = [...new Set(matches.flat())].map(i => members[i]);
+  const previousSchedules = [{ date: '2026-10-04', participantIds, fixedPlayerIds: participantIds, matchMap: Object.fromEntries(matches.map((four, i) => [`r${Math.floor(i / 2) + 1}-c${i % 2 + 1}`, { round: Math.floor(i / 2) + 1, court: i % 2 + 1, teamA: four.slice(0, 2).map(i => members[i]), teamB: four.slice(2).map(i => members[i]) }])) }];
+  const inclusion = [0, 0], draws = 16;
+  for (let sample = 0; sample < draws; sample++) {
+    const random = seeded(937 + sample * 104729);
+    const extra = new Set(members.map(id => ({ id, order: random() })).sort((a, b) => a.order - b.order).slice(0, 6).map(item => item.id));
+    const quotas = Object.fromEntries(members.map(id => [id, 3 + Number(extra.has(id))]));
+    const result = generateSchedule(members, quotas, { strengths, previousSchedules, meetingDate: '2026-10-11', random });
+    const teams = Object.values(result.matchMap).flatMap(match => [match.teamA, match.teamB]);
+    for (const [i, pair] of [[0, [members[0], members[9]]], [1, [members[1], members[10]]]]) if (teams.some(team => pair.every(id => team.includes(id)))) inclusion[i]++;
+    assert.equal(result.consecutiveRests, 0);
+    assert.equal(result.partnerRepeats, 0);
+    assert.ok(result.balance.maxGap / STRENGTH_STEP < 2.3);
+    for (const id of members) assert.equal(teams.filter(team => team.includes(id)).length, quotas[id]);
+  }
+  assert.ok(inclusion.every(count => count < draws * 0.85), `Replacement pair inclusions: ${inclusion}`);
+  // These remain independent previews, never fictitious saved meetings.
+  assert.equal(previousSchedules.length, 1);
+});

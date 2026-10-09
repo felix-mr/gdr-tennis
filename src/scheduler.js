@@ -28,6 +28,11 @@ export function generateSchedule(ids, quotas, { random = Math.random, attempts =
   const strength = id => Number.isFinite(strengths[id]) && strengths[id] >= 0 && strengths[id] <= 1 ? strengths[id] : 0.5;
   const history = recentPairingHistory(previousSchedules, meetingDate, ids);
   if (Object.entries(timingPreferences).some(([id, value]) => !ids.includes(id) || !['early', 'late'].includes(value))) throw new Error('멤버별 시작·마무리 선택을 확인해 주세요.');
+  // Random candidate order alone still converges on the same cheapest partners.
+  // Keep one bounded, symmetric preference per pair for this draw, shared by all
+  // attempts. Saved history, repeat penalties and match-gap limits still apply.
+  const drawPartnerCosts = {}, orderedIds = [...ids].sort();
+  for (let a = 0; a < orderedIds.length; a++) for (let b = a + 1; b < orderedIds.length; b++) drawPartnerCosts[pairKey(orderedIds[a], orderedIds[b])] = 80 * (random() - 0.5);
   let best = null;
   for (let attempt = 0; attempt < attempts; attempt++) {
     const remaining = { ...quotas }, partners = {}, opponents = {}, firstActive = {}, lastActive = {}, restStreak = {}, matchMap = {};
@@ -68,10 +73,10 @@ export function generateSchedule(ids, quotas, { random = Math.random, attempts =
           const strengthB = strength(shuffled[i + 2]) + strength(shuffled[i + 3]);
           gapCost += (Math.max(0, Math.abs(strengthA - strengthB) - TEAM_GAP_ALLOWANCE) / STRENGTH_STEP) ** 2;
           severeCost += Math.max(0, Math.abs(strengthA - strengthB) / STRENGTH_STEP - 4) ** 2;
-          for (const team of [shuffled.slice(i, i + 2), shuffled.slice(i + 2, i + 4)]) { const key = pairKey(...team); if (!fixedKeys.has(key)) penalty += (partners[key] || 0) * 100 + 16 * (history.partners[key] || 0); for (const id of team) if (preferred[id] && !team.includes(preferred[id])) penalty += 250; }
+          for (const team of [shuffled.slice(i, i + 2), shuffled.slice(i + 2, i + 4)]) { const key = pairKey(...team); if (!fixedKeys.has(key)) penalty += (partners[key] || 0) * 100 + 16 * (history.partners[key] || 0) + drawPartnerCosts[key]; for (const id of team) if (preferred[id] && !team.includes(preferred[id])) penalty += 250; }
           for (const a of shuffled.slice(i, i + 2)) for (const b of shuffled.slice(i + 2, i + 4)) { const key = pairKey(a, b); penalty += (opponents[key] || 0) * 4 + 6 * (history.opponents[key] || 0); }
         }
-        penalty += 600 * gapCost + courtSeparationCost(shuffled, strength);
+        penalty += 600 * gapCost + 2 * courtSeparationCost(shuffled, strength);
         if (!pairing || severeCost < pairing.severeCost - 1e-9 || (Math.abs(severeCost - pairing.severeCost) <= 1e-9 && penalty < pairing.penalty)) pairing = { shuffled, penalty, gapCost, severeCost };
       }
       cost += pairing.penalty;
