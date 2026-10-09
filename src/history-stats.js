@@ -1,5 +1,5 @@
-import { validDate, ranking, rankStats, quarter } from './model.js';
-import { withinPeriod, quarterBounds } from './periods.js';
+import { validDate, ranking, rankStats } from './model.js';
+import { withinPeriod } from './periods.js';
 
 export function normalizeDailyRows(dataset) {
   if (dataset.kind !== 'daily-individual-aggregate' || dataset.contributesToLiveRanking === false || dataset.status === 'superseded' || dataset.datePrecision !== 'day' || !validDate(dataset.cutoff)) return [];
@@ -30,22 +30,4 @@ export function rankingWithHistory(records, players, period, sets) {
     row.historyGames += old.games; row.historyReview ||= old.review;
   }
   return rankStats([...rows.values()]);
-}
-// Only pre-quarter career data nudges the manual prior, by at most 1.6 points
-// on the internal 0–1 scale. Current-quarter evidence remains separate.
-export function historicalPriors(priors, sets, date) {
-  const before = quarterBounds(quarter(date)).start;
-  const candidates = sets.filter(set => set.kind === 'individual-aggregate' && set.contributesToRatings === true && set.id.startsWith('career-') && validDate(`${set.cutoff}-01`) && `${set.cutoff}-31` < before).sort((a, b) => b.cutoff.localeCompare(a.cutoff));
-  const result = { ...priors }, seen = new Set();
-  for (const set of candidates) for (const row of set.rows) {
-    if (!Object.hasOwn(priors, row.playerId) || seen.has(row.playerId)) continue;
-    const stats = row.stats;
-    if (!['wins', 'draws', 'losses'].every(key => Number.isInteger(stats?.[key]) && stats[key] >= 0)) continue;
-    const games = stats.wins + stats.draws + stats.losses; if (!games) continue;
-    seen.add(row.playerId);
-    const weight = 0.08 * games / (games + 40), change = (stats.wins / games - 0.5) * 0.4;
-    const target = Math.max(0, Math.min(1, priors[row.playerId] + change));
-    result[row.playerId] = priors[row.playerId] * (1 - weight) + target * weight;
-  }
-  return result;
 }

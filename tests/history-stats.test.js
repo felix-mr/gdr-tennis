@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { datedHistory, normalizeDailyRows, rankingWithHistory, historicalPriors } from '../src/history-stats.js';
+import { datedHistory, normalizeDailyRows, rankingWithHistory } from '../src/history-stats.js';
 import { recordImagePages } from '../src/record-image.js';
 
 const players = [{ id: 'a', name: '김민종' }, { id: 'b', name: '여상재' }, { id: 'c', name: '김동주' }, { id: 'd', name: '심진우' }];
@@ -29,14 +29,4 @@ test('dated source can produce daily and cumulative pictures with an inclusive c
   assert.equal(pages[0].rows[0].points, 10);
   assert.equal(pages[1].rows[0].points, 10);
   assert.throws(() => recordImagePages([], players, '2026-Q4', daily.cutoff, [daily]), /기간/);
-});
-test('career results only nudge priors before the meeting quarter; overlap and disabled sources excluded', () => {
-  const priors = { a: 0.9, b: 0.1 };
-  const career = { id: 'career-2026-06', kind: 'individual-aggregate', contributesToRatings: true, cutoff: '2026-06', rows: [{ playerId: 'a', stats: { wins: 200, draws: 0, losses: 0 } }, { playerId: 'b', stats: { wins: 0, draws: 0, losses: 200 } }] };
-  const result = historicalPriors(priors, [career], '2026-10-11');
-  assert.ok(result.a > priors.a && result.a - priors.a < 0.016);
-  assert.ok(result.b < priors.b && priors.b - result.b < 0.016);
-  assert.deepEqual(historicalPriors(priors, [career], '2026-04-05'), priors);
-  assert.deepEqual(historicalPriors(priors, [{ ...career, cutoff: '2026-10' }], '2026-10-11'), priors);
-  assert.deepEqual(historicalPriors(priors, [{ ...career, contributesToRatings: false }], '2026-10-11'), priors);
 });

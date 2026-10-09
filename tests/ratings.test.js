@@ -56,10 +56,10 @@ test('a win against higher rated teams provides more evidence than an expected w
   assert.ok(strengthsForSession([strong], ids, baseline, date).gdr013 > strengthsForSession([weak], ids, baseline, date).gdr013);
 });
 
-test('exclude other quarters, same/future date, invalid score, duplicate player and unknown IDs', () => {
+test('exclude other half-years, same/future date, invalid score, duplicate player and unknown IDs', () => {
   const good = record(['gdr001', 'gdr002'], ['gdr011', 'gdr010']);
   const invalid = [
-    { ...good, date: '2026-09-27' }, { ...good, date }, { ...good, date: '2026-11-08' },
+    { ...good, date: '2026-06-28' }, { ...good, date }, { ...good, date: '2026-11-08' },
     { ...good, scoreA: -1 }, { ...good, outcome: 'draw' },
     { ...good, teamB: ['gdr001', 'gdr010'] }, { ...good, teamA: ['unknown', 'gdr002'] },
     { ...good, fixedPlayerIds: [] },
@@ -78,4 +78,36 @@ test('14-member weighted scheduling retains game counts, time window and prepara
   validateSession({ date, participantIds: ids, fixedPlayerIds: ids, startTime: '19:00', roundMinutes: 30, matchMap: result.matchMap, lockedPairs }, ids);
   assert.ok(Math.max(...Object.values(result.matchMap).map(match => match.round)) <= 4);
   for (const match of Object.values(result.matchMap)) if ([...match.teamA, ...match.teamB].includes('gdr001')) assert.ok([match.teamA, match.teamB].some(team => team.includes('gdr001') && team.includes('gdr014')));
+});
+
+test('Q3 and Q4 outcomes inform the same half-year; H1, previous year and career sources never contribute', () => {
+  const good = record(['gdr013', 'gdr009'], ['gdr006', 'gdr007']);
+  const q3 = { ...good, date: '2026-09-27' };
+  assert.deepEqual(strengthsForSession([q3], ids, baseline, date), strengthsForSession([good], ids, baseline, date));
+  const old = ['2026-06-28', '2025-10-05'].map(date => ({ ...good, date }));
+  const career = { id: 'career-2026-06', kind: 'individual-aggregate', contributesToRatings: true, datePrecision: 'month', cutoff: '2026-06', rows: [{ playerId: 'gdr013', stats: { wins: 100, draws: 0, losses: 0 } }] };
+  const h1 = { ...career, period: '2026-H1', datePrecision: 'day', cutoff: '2026-06-28' };
+  assert.deepEqual(strengthsForSession(old, ids, baseline, date, [career, h1]), initialStrengths(ids, baseline));
+  assert.deepEqual(strengthsForSession([good], ids, baseline, date, [career, h1]), strengthsForSession([good], ids, baseline, date));
+});
+test('half-year snapshots use only verified identities, remove covered actual outcomes and do not leak future results', () => {
+  const actual = record(['gdr013', 'gdr009'], ['gdr006', 'gdr007']);
+  const snapshot = { id: 'half-2026-H2', kind: 'individual-aggregate', period: '2026-H2', periodStart: '2026-07-01', datePrecision: 'day', cutoff: '2026-10-11', rows: [{ playerId: 'gdr013', stats: { games: 1, wins: 1, draws: 0, losses: 0 }, issues: [] }] };
+  const withActual = strengthsForSession([actual], ids, baseline, date);
+  assert.deepEqual(strengthsForSession([actual], ids, baseline, date, [snapshot]), withActual);
+  const many = { ...snapshot, rows: [{ ...snapshot.rows[0], stats: { games: 40, wins: 40, draws: 0, losses: 0 } }] };
+  const priors = initialStrengths(ids, baseline), changed = strengthsForSession([], ids, baseline, date, [many]);
+  assert.ok(changed.gdr013 > priors.gdr013 && changed.gdr013 - priors.gdr013 < 0.03);
+  for (const bad of [{ ...many, periodStart: '2026-01-01' }, { ...many, periodStart: undefined }, { ...many, cutoff: date }, { ...many, cutoff: '2026-11-08' }, { ...many, period: '2025-H2' }, { ...many, rows: [{ ...many.rows[0], playerId: null }] }, { ...many, rows: [{ ...many.rows[0], issues: ['ambiguous-identity'] }] }]) assert.deepEqual(strengthsForSession([], ids, baseline, date, [bad]), priors);
+});
+test('dated aggregates stay inside the half-year and covered days never count twice', () => {
+  const daily = { id: 'daily-h2', kind: 'daily-individual-aggregate', datePrecision: 'day', cutoff: '2026-09-27', rows: [{ playerId: 'gdr013', name: '서명렬', stats: { wins: 2, draws: 0, losses: 0, scored: 12, conceded: 8 } }] };
+  const priors = initialStrengths(ids, baseline), withDaily = strengthsForSession([], ids, baseline, date, [daily]);
+  assert.ok(withDaily.gdr013 > priors.gdr013);
+  const excluded = [ { ...daily, cutoff: '2026-06-28' }, { ...daily, cutoff: date }, { ...daily, rows: [{ ...daily.rows[0], issues: ['identity-review'] }] } ];
+  assert.deepEqual(strengthsForSession([], ids, baseline, date, excluded), priors);
+  const snapshot = { id: 'half', kind: 'individual-aggregate', period: '2026-H2', periodStart: '2026-07-01', datePrecision: 'day', cutoff: '2026-10-04', rows: [{ playerId: 'gdr013', stats: { games: 10, wins: 7, draws: 0, losses: 3 } }] };
+  assert.deepEqual(strengthsForSession([], ids, baseline, date, [snapshot, daily]), strengthsForSession([], ids, baseline, date, [snapshot]));
+  const actual = record(['gdr013', 'gdr009'], ['gdr006', 'gdr007'], 'teamA', { date: daily.cutoff });
+  assert.deepEqual(strengthsForSession([actual], ids, baseline, date, [daily]), strengthsForSession([actual], ids, baseline, date));
 });
