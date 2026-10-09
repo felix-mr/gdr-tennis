@@ -235,7 +235,7 @@ function build(quotas) {
   const strengths = strengthsForSession(recordsFrom(state), players.map(p => p.id), baseline, date, historySets);
   for (const id of ids) if (Object.hasOwn(guests, id)) strengths[id] = GUEST_STRENGTH;
   const preferences = Object.fromEntries(Object.entries(timingPreferences).filter(([id]) => selected.has(id)));
-  const result = generateSchedule(ids, quotas, { strengths, lockedPairs: activePairs, timingPreferences: preferences });
+  const result = generateSchedule(ids, quotas, { strengths, lockedPairs: activePairs, timingPreferences: preferences, previousSchedules: Object.values(state.sessions), meetingDate: date });
   if (Math.max(...Object.values(result.matchMap).map(m => m.round)) > windowRounds) throw new Error('조정한 경기 수를 모임 시간 안에 배정할 수 없습니다. 종료 시간을 늘리거나 경기 수를 줄여 주세요.');
   const profiles = Object.fromEntries(Object.entries(guests).filter(([id]) => selected.has(id)));
   draft = { schemaVersion: 1, date, participantIds: ids, fixedPlayerIds: ids.filter(id => Object.hasOwn(names, id)), ...(Object.keys(profiles).length ? { guests: profiles } : {}), startTime, roundMinutes, endTime, matchMap: result.matchMap, partnerRepeats: result.partnerRepeats, lockedPairs: activePairs };
