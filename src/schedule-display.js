@@ -7,6 +7,11 @@ export function defaultScheduleDate(sessions, today, preferred = '') {
   const dates = Object.keys(sessions).sort();
   return dates.includes(preferred) ? preferred : dates.find(date => date >= today) || nextSunday(today);
 }
+export function scheduleDates(sessions, today) {
+  const dates = Object.keys(sessions).sort().reverse(), upcoming = defaultScheduleDate(sessions, today);
+  if (!dates.includes(upcoming)) dates.unshift(upcoming);
+  return dates;
+}
 export function renderRounds({ session, state, names, editable = false, writable = false, dirty = new Map(), focusPlayer = '', controlPrefix = 'manage' }) {
   const labels = { ...names, ...Object.fromEntries(Object.entries(session.guests || {}).map(([id, guest]) => [id, guest.name])) };
   const entries = Object.entries(session.matchMap), rounds = [...new Set(entries.map(([, match]) => match.round))].sort((a, b) => a - b);

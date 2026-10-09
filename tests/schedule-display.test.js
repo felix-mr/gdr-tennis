@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { defaultScheduleDate, renderRounds } from '../src/schedule-display.js';
+import { defaultScheduleDate, scheduleDates, renderRounds } from '../src/schedule-display.js';
 
 const session = { date: '2026-10-11', startTime: '19:00', endTime: '20:00', roundMinutes: 30, participantIds: ['a', 'b', 'c', 'd', 'e'], lockedPairs: [['a', 'b']], matchMap: { m1: { round: 1, court: 2, teamA: ['a', 'b'], teamB: ['c', 'd'] }, m2: { round: 2, court: 1, teamA: ['a', 'e'], teamB: ['c', 'd'] } } };
 const names = { a: '<a>', b: 'B', c: 'C', d: 'D', e: 'E' };
@@ -10,6 +10,13 @@ test('member default uses upcoming confirmed meeting, otherwise pending next mee
   assert.equal(defaultScheduleDate({ '2026-10-04': {} }, '2026-10-09'), '2026-10-11');
   assert.equal(defaultScheduleDate({ '2026-10-04': {}, '2026-10-18': {}, '2026-10-11': {} }, '2026-10-09'), '2026-10-11');
   assert.equal(defaultScheduleDate({ '2026-10-04': {}, '2026-10-11': {} }, '2026-10-09', '2026-10-04'), '2026-10-04');
+});
+test('pending next meeting remains selectable after choosing a past schedule', () => {
+  const sessions = { '2026-10-04': {} };
+  assert.equal(defaultScheduleDate(sessions, '2026-10-09', '2026-10-04'), '2026-10-04');
+  assert.deepEqual(scheduleDates(sessions, '2026-10-09'), ['2026-10-11', '2026-10-04']);
+  assert.deepEqual(scheduleDates({}, '2026-10-09'), ['2026-10-11']);
+  assert.deepEqual(scheduleDates({ ...sessions, '2026-10-11': {} }, '2026-10-09'), ['2026-10-11', '2026-10-04']);
 });
 test('member display is read-only, escapes names and shows fixed pair, saved score and correct idle court', () => {
   const html = renderRounds({ session, state, names });

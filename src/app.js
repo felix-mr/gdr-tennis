@@ -20,7 +20,7 @@ import { matchesPlayer, matchesRecord } from './search.js';
 import { mountPersonalView } from './personal-view.js';
 import { readHistory } from './history-store.js';
 import { generationOf, resultFor } from './session-lifecycle.js';
-import { defaultScheduleDate, renderRounds } from './schedule-display.js';
+import { defaultScheduleDate, scheduleDates, renderRounds } from './schedule-display.js';
 import { openCancellation } from './cancel-dialog.js';
 const courtName = court => court === 1 ? '안쪽' : '바깥쪽';
 const $ = selector => document.querySelector(selector);
@@ -99,8 +99,7 @@ function setMeetingDate(value) {
 }
 function updateConnection() { $('#connection-status').textContent = status; document.querySelector('.status-dot').classList.toggle('connected', writable); }
 function renderViewer() {
-  const dates = Object.keys(state.sessions).sort().reverse(), current = defaultScheduleDate(state.sessions, koreaToday(), viewerDate);
-  if (!dates.includes(current)) dates.unshift(current);
+  const dates = scheduleDates(state.sessions, koreaToday()), current = defaultScheduleDate(state.sessions, koreaToday(), viewerDate);
   $('#viewer-date').innerHTML = dates.length ? dates.map(value => `<option value="${value}">${value}${state.sessions[value] ? '' : ' · 편성 전'}</option>`).join('') : '<option value="">확정된 모임 없음</option>';
   $('#viewer-date').value = current; $('#viewer-date').disabled = !dates.length;
   const content = $('#viewer-content'), session = state.sessions[current];
