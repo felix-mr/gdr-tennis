@@ -4,7 +4,7 @@ import { pathToFileURL } from 'node:url';
 import { dirname } from 'node:path';
 import { generateSchedule, allocateForWindow } from '../src/scheduler.js';
 import { initialStrengths, strengthsForSession } from '../src/ratings.js';
-import { STRENGTH_STEP } from '../src/pairing-policy.js';
+import { STRENGTH_STEP, ROTATING_PLAYERS } from '../src/pairing-policy.js';
 import { validateSession } from '../src/model.js';
 import players from '../data/players.json' with { type: 'json' };
 import baseline from '../data/strength-baseline.json' with { type: 'json' };
@@ -36,7 +36,8 @@ const cases = [
   { name: '10 members, 4 rounds', ids: ids10, rounds: 4 },
   { name: '14 members, 6 rounds', ids: ids14, rounds: 6 },
   { name: '8–14 changing attendees', ids: ids14, rounds: 4, variable: true },
-  { name: '14 members, 7 fixed pairs', ids: ids14, rounds: 4, lockedPairs: baseline.groups },
+  // Leave four players free so each rotating player has multiple partners.
+  { name: '14 members, 5 fixed pairs and 4 free players', ids: ids14, rounds: 4, lockedPairs: baseline.groups.filter(pair => !pair.some(id => ROTATING_PLAYERS.includes(id))).slice(0, 5) },
   { name: '14 members, changing ratings', ids: ids14, rounds: 4, drift: true },
   { name: '14 members and 2 guests', ids: [...ids14, 'guest001', 'guest002'], rounds: 4 },
 ];
@@ -51,7 +52,8 @@ for (const scenario of cases) for (const version of versions) {
     const random = seeded(9137 + sample * 104729);
     let ids = scenario.ids;
     if (scenario.variable) ids = [...ids].map(id => ({ id, value: random() })).sort((a, b) => a.value - b.value).slice(0, [8, 10, 12, 14][sample % 4]).map(item => item.id);
-    const units = scenario.lockedPairs || ids.map(id => [id]);
+    const lockedIds = new Set((scenario.lockedPairs || []).flat());
+    const units = [...(scenario.lockedPairs || []), ...ids.filter(id => !lockedIds.has(id)).map(id => [id])];
     const offset = sample % units.length;
     const order = [...units.slice(offset), ...units.slice(0, offset)].flat();
     const slots = scenario.rounds * (ids.length >= 8 ? 8 : 4);

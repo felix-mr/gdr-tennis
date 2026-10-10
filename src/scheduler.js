@@ -1,5 +1,5 @@
 import { MAX_ROUNDS } from './model.js';
-import { STRENGTH_STEP, TEAM_GAP_ALLOWANCE, pairKey, recentPairingHistory, nearbyPairing, matchSpreadCost } from './pairing-policy.js';
+import { STRENGTH_STEP, TEAM_GAP_ALLOWANCE, ROTATING_PLAYERS, pairKey, recentPairingHistory, nearbyPairing, matchSpreadCost } from './pairing-policy.js';
 // Retained for old fixed-target schedules. New schedules use the meeting window.
 export function allocateGames(ids, target, totals = {}) {
   if (ids.length < 4 || new Set(ids).size !== ids.length) throw new Error('참가자 4명 이상을 중복 없이 선택해 주세요.');
@@ -16,6 +16,11 @@ export function allocateGames(ids, target, totals = {}) {
 export function generateSchedule(ids, quotas, { random = Math.random, attempts = 250, strengths = {}, lockedPairs = [], preferredPairs = [], timingPreferences = {}, previousSchedules = [], meetingDate = '' } = {}) {
   if (ids.length < 4 || new Set(ids).size !== ids.length || Object.keys(quotas).length !== ids.length || ids.some(id => !Number.isInteger(quotas[id]) || quotas[id] < 2 || quotas[id] > MAX_ROUNDS)) throw new Error('참가자별 최소 2경기를 모임 시간에 맞춰 주세요.');
   const units = pairUnits(ids, lockedPairs);
+  const rotating = new Set(ROTATING_PLAYERS.filter(id => ids.includes(id)));
+  const rotationKey = pairKey(...ROTATING_PLAYERS);
+  const opponentLimit = rotating.size === 2 ? Math.min(...ROTATING_PLAYERS.map(id => quotas[id])) - 1 : Infinity;
+  if (lockedPairs.some(pair => pair.some(id => rotating.has(id)))) throw new Error('근화·재혁은 당일 같은 파트너와 한 번만 경기할 수 있어 대회 준비 고정 페어로 지정할 수 없습니다.');
+  if ([...rotating].some(id => quotas[id] > ids.length - 1)) throw new Error('근화·재혁의 파트너가 중복되지 않도록 참석자를 늘리거나 개인 경기 수를 줄여 주세요.');
   pairUnits(ids, preferredPairs);
   const allPreferred = [...lockedPairs, ...preferredPairs];
   const preferred = Object.fromEntries(allPreferred.flatMap(([a, b]) => [[a, b], [b, a]]));
@@ -59,6 +64,7 @@ export function generateSchedule(ids, quotas, { random = Math.random, attempts =
       const optionalIds = choose(0, count - requiredIds.length);
       if (!optionalIds) { failed = true; break; }
       const active = [...requiredIds, ...optionalIds];
+      const nearbyTrials = new Set(active.map(strength)).size > 1 ? 18 : 6;
       let pairing = null;
       for (let trial = 0; trial < 45; trial++) {
         const fixedTeams = lockedPairs.filter(pair => active.includes(pair[0]));
@@ -66,7 +72,11 @@ export function generateSchedule(ids, quotas, { random = Math.random, attempts =
         const loose = active.filter(id => !fixedIds.has(id)).map(id => ({ id, value: random() })).sort((a, b) => a.value - b.value).map(x => x.id);
         const teams = [...fixedTeams];
         for (let i = 0; i < loose.length; i += 2) teams.push(loose.slice(i, i + 2));
-        const shuffled = (trial < 6 ? nearbyPairing(active, lockedPairs, strength, random) : null) || teams.map(team => ({ team, value: random() })).sort((a, b) => a.value - b.value).flatMap(x => x.team);
+        const shuffled = (trial < nearbyTrials ? nearbyPairing(active, lockedPairs, strength, random) : null) || teams.map(team => ({ team, value: random() })).sort((a, b) => a.value - b.value).flatMap(x => x.team);
+        const trialTeams = Array.from({ length: shuffled.length / 2 }, (_, i) => shuffled.slice(i * 2, i * 2 + 2));
+        if (trialTeams.some(team => team.some(id => rotating.has(id)) && partners[pairKey(...team)])) continue;
+        const rotationOpponents = trialTeams.some((team, i) => i % 2 === 0 && ROTATING_PLAYERS.some(id => team.includes(id)) && ROTATING_PLAYERS.some(id => trialTeams[i + 1].includes(id)));
+        if (rotationOpponents && (opponents[rotationKey] || 0) >= opponentLimit) continue;
         let penalty = 0, gapCost = 0, severeCost = 0;
         for (let i = 0; i < shuffled.length; i += 4) {
           const strengthA = strength(shuffled[i]) + strength(shuffled[i + 1]);
@@ -80,6 +90,7 @@ export function generateSchedule(ids, quotas, { random = Math.random, attempts =
         penalty += 600 * gapCost;
         if (!pairing || severeCost < pairing.severeCost - 1e-9 || (Math.abs(severeCost - pairing.severeCost) <= 1e-9 && penalty < pairing.penalty)) pairing = { shuffled, penalty, gapCost, severeCost };
       }
+      if (!pairing) { failed = true; break; }
       cost += pairing.penalty;
       excessGap += pairing.gapCost;
       severeGap += pairing.severeCost;
@@ -119,7 +130,7 @@ export function generateSchedule(ids, quotas, { random = Math.random, attempts =
     }
   }
   if (!best && lockedPairs.length) return generateSchedule(ids, quotas, { random, attempts, strengths, preferredPairs: lockedPairs, timingPreferences, previousSchedules, meetingDate });
-  if (!best) throw new Error('이 경기 수 조합으로 배정하지 못했습니다. 개인 경기 수를 고르게 조정해 주세요.');
+  if (!best) throw new Error(rotating.size ? '근화·재혁의 파트너 중복 금지와 서로 매판 상대하지 않는 조건으로 배정하지 못했습니다. 참석자 또는 개인 경기 수를 조정해 주세요.' : '이 경기 수 조합으로 배정하지 못했습니다. 개인 경기 수를 고르게 조정해 주세요.');
   const gaps = Object.values(best.matchMap).map(match => Math.abs(match.teamA.reduce((sum, id) => sum + strength(id), 0) - match.teamB.reduce((sum, id) => sum + strength(id), 0)));
   best.balance = { averageGap: gaps.reduce((a, b) => a + b, 0) / gaps.length, maxGap: Math.max(...gaps) };
   return best;
