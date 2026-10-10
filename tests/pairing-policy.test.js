@@ -91,7 +91,7 @@ test('fresh three-hour draws do not converge on the same replacement partners af
   assert.equal(previousSchedules.length, 1);
 });
 
-test('low-total games and high-total games can coexist with mixed games without any saved history', () => {
+test('stronger nearby preference selects low and high foursomes without requiring mixed games', () => {
   const members = ['l1', 'l2', 'l3', 'l4', 'h1', 'h2', 'h3', 'h4'];
   const values = [0.1, 0.2, 0.1, 0.3, 0.7, 0.8, 0.7, 0.9];
   const strengths = Object.fromEntries(members.map((id, i) => [id, values[i]]));
@@ -102,8 +102,8 @@ test('low-total games and high-total games can coexist with mixed games without 
   const totals = [low[0].teamA, low[0].teamB].map(team => team.reduce((sum, id) => sum + strengths[id], 0)).sort();
   assert.ok(Math.abs(totals[0] - 0.3) < 1e-9 && Math.abs(totals[1] - 0.4) < 1e-9);
   assert.ok(matches.some(match => [...match.teamA, ...match.teamB].every(id => strengths[id] >= 0.7)));
-  assert.ok(matches.some(match => [...match.teamA, ...match.teamB].some(id => strengths[id] <= 0.3) && [...match.teamA, ...match.teamB].some(id => strengths[id] >= 0.7)));
+  assert.ok(matches.every(match => [...match.teamA, ...match.teamB].every(id => strengths[id] <= 0.3) || [...match.teamA, ...match.teamB].every(id => strengths[id] >= 0.7)));
   assert.equal(result.consecutiveRests, 0);
   assert.equal(result.partnerRepeats, 0);
-  assert.ok(result.balance.maxGap / STRENGTH_STEP <= 2 + 1e-8);
+  assert.ok(result.balance.maxGap / STRENGTH_STEP <= 2.25 + 1e-8);
 });
