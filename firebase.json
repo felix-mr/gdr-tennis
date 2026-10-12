@@ -1,1 +1,34 @@
-{"firestore":{"rules":"firebase/firestore.rules"},"emulators":{"firestore":{"port":8080},"ui":{"enabled":false}}}
+{
+  "firestore": {
+    "rules": "firebase/firestore.rules"
+  },
+  "emulators": {
+    "firestore": {
+      "port": 8080
+    },
+    "ui": {
+      "enabled": false
+    }
+  },
+  "functions": {
+    "source": ".",
+    "codebase": "gdr-admin",
+    "runtime": "nodejs22",
+    "ignore": [
+      "node_modules",
+      ".git",
+      ".env.local",
+      ".env.example",
+      ".env.*",
+      "dist",
+      "output",
+      "tests",
+      "public",
+      "README.md",
+      "docs",
+      "*-debug.log",
+      ".env",
+      ".secret.local"
+    ]
+  }
+}
