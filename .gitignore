@@ -6,3 +6,7 @@ dist/
 .playwright-cli/
 output/
 *-debug.log
+
+.secret.local
+.env.*
+!.env.example
