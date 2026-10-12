@@ -232,7 +232,7 @@ function build(quotas) {
   const windowRounds = meetingWindow(startTime, endTime);
   const activePairs = pairsEnabled ? lockedPairs.filter(pair => pair.every(id => ids.includes(id))) : [];
   quotas ??= allocateForWindow(ids, windowRounds, activePairs);
-  const strengths = strengthsForSession(recordsFrom(state), players.map(p => p.id), baseline, date, historySets);
+  const strengths = strengthsForSession(recordsFrom(state), players.map(p => p.id), baseline, date, historySets, { sessions: Object.values(state.sessions), periods });
   for (const id of ids) if (Object.hasOwn(guests, id)) strengths[id] = GUEST_STRENGTH;
   const preferences = Object.fromEntries(Object.entries(timingPreferences).filter(([id]) => selected.has(id)));
   const result = generateSchedule(ids, quotas, { strengths, lockedPairs: activePairs, timingPreferences: preferences, previousSchedules: Object.values(state.sessions), meetingDate: date });

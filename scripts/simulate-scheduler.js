@@ -8,6 +8,7 @@ import { STRENGTH_STEP } from '../src/pairing-policy.js';
 import { validateSession } from '../src/model.js';
 import players from '../data/players.json' with { type: 'json' };
 import baseline from '../data/strength-baseline.json' with { type: 'json' };
+import periods from '../data/periods.json' with { type: 'json' };
 import { GUEST_STRENGTH } from '../src/guests.js';
 
 const option = name => process.argv.includes(name) ? process.argv[process.argv.indexOf(name) + 1] : undefined;
@@ -19,7 +20,7 @@ const input = option('--input') ? JSON.parse(await readFile(option('--input'), '
 const allIds = players.map(player => player.id), ids14 = allIds.slice(0, 14);
 const names = Object.fromEntries(players.map(player => [player.id, player.name]));
 const initial = initialStrengths(allIds, baseline);
-const current = strengthsForSession(input.records, allIds, baseline, '2026-10-11', input.history);
+const current = strengthsForSession(input.records, allIds, baseline, '2026-10-11', input.history, { sessions: Object.values(input.state?.sessions || {}), periods });
 const versions = [{ name: 'new', generate: generateSchedule }];
 if (option('--compare-ref')) {
   let source = execFileSync('git', ['show', `${option('--compare-ref')}:src/scheduler.js`], { encoding: 'utf8' }).replace("'./model.js'", JSON.stringify(pathToFileURL(process.cwd() + '/src/model.js').href));

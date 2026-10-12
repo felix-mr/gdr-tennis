@@ -1,6 +1,6 @@
-import { validDate, validResult } from './model.js';
+import { quarter, validDate, validResult } from './model.js';
 import { GUEST_STRENGTH, validateGuests } from './guests.js';
-import { halfYear, withinPeriod } from './periods.js';
+import { halfYear, halfYearBounds, quarterBounds, withinPeriod } from './periods.js';
 import { datedHistory } from './history-stats.js';
 
 const clamp = value => Math.max(0, Math.min(1, value));
@@ -19,15 +19,15 @@ export function initialStrengths(ids, baseline = {}) {
   return priors;
 }
 
-// Shrink opponent-adjusted results toward the supplied prior. Attendance affects
-// confidence, not a player's performance score. A quadratic ramp keeps the
-// supplied prior dominant early, with equal weights after 24 recorded games.
-export function strengthsForSession(records, ids, baseline, date, history = []) {
+// Attendance and relative game volume attenuate confidence, never performance.
+// Recent-quarter form nudges half-year form only after enough quarter evidence.
+export function strengthsForSession(records, ids, baseline, date, history = [], context = {}) {
   if (!validDate(date)) throw new Error('모임 날짜를 확인해 주세요.');
   const priors = initialStrengths(ids, baseline), period = halfYear(date);
   const priorGames = baseline.priorGames ?? 24;
   if (!Number.isFinite(priorGames) || priorGames <= 0) throw new Error('대진 초기 설정을 확인해 주세요.');
-  const observations = Object.fromEntries(ids.map(id => [id, { games: 0, residual: 0 }]));
+  const empty = () => Object.fromEntries(ids.map(id => [id, { games: 0, residual: 0 }]));
+  const observations = empty(), recent = empty(), currentQuarter = quarter(date);
   const accepted = [];
   for (const record of records) {
     if (!validDate(record.date) || record.date >= date || !withinPeriod(period, record.date) || !validResult(record)) continue;
@@ -40,29 +40,81 @@ export function strengthsForSession(records, ids, baseline, date, history = []) 
     const mean = team => team.reduce((sum, id) => sum + (priors[id] ?? GUEST_STRENGTH), 0) / 2;
     const expected = 1 / (1 + Math.exp(-4 * (mean(teamA) - mean(teamB))));
     const actual = record.outcome === 'draw' ? 0.5 : record.outcome === 'teamA' ? 1 : 0;
-    for (const id of teamA) if (observations[id]) { observations[id].games++; observations[id].residual += actual - expected; }
-    for (const id of teamB) if (observations[id]) { observations[id].games++; observations[id].residual -= actual - expected; }
+    for (const [team, residual] of [[teamA, actual - expected], [teamB, expected - actual]]) for (const id of team) if (observations[id]) {
+      observations[id].games++; observations[id].residual += residual;
+      if (withinPeriod(currentQuarter, record.date)) { recent[id].games++; recent[id].residual += residual; }
+    }
   }
-  const aggregate = halfYearEvidence(history, accepted, ids, date);
+  const aggregate = periodEvidence(history, accepted, ids, date, period);
+  const recentAggregate = periodEvidence(history, accepted, ids, date, currentQuarter);
+  const confidence = participationConfidence(accepted, history, ids, date, period, observations, aggregate, context);
+  const recentConfidence = participationConfidence(accepted, history, ids, date, currentQuarter, recent, recentAggregate, context);
   return Object.fromEntries(ids.map(id => {
     const { games, residual } = observations[id];
     const old = aggregate[id];
-    const oldWeight = old?.games ? 0.15 * old.games ** 2 / (old.games ** 2 + priorGames ** 2) : 0;
+    const oldWeight = 0.15 * sampleWeight(old.games, priorGames) * confidence[id];
     const anchor = clamp(priors[id] + oldWeight * (old?.games ? (old.wins + old.draws / 2) / old.games - 0.5 : 0) * 0.4);
-    if (!games) return [id, anchor];
-    const performance = clamp(priors[id] + residual / games);
-    const weight = games ** 2 / (games ** 2 + priorGames ** 2);
-    return [id, anchor * (1 - weight) + performance * weight];
+    const quarterOld = recentAggregate[id], quarterActual = recent[id];
+    const recentWeight = 0.25 * sampleWeight(quarterOld.games + quarterActual.games, priorGames / 2) * recentConfidence[id];
+    const quarterAnchor = clamp(priors[id] + 0.15 * sampleWeight(quarterOld.games, priorGames) * recentConfidence[id] * (quarterOld.games ? (quarterOld.wins + quarterOld.draws / 2) / quarterOld.games - 0.5 : 0) * 0.4);
+    // A quarter without separable aggregate evidence must not erase H2 evidence.
+    const adjustedAnchor = quarterOld.games ? anchor + recentWeight * (quarterAnchor - anchor) : anchor;
+    if (!games) return [id, adjustedAnchor];
+    const form = residual / games;
+    const recentForm = quarterActual.games ? form + recentWeight * (quarterActual.residual / quarterActual.games - form) : form;
+    const performance = clamp(priors[id] + recentForm);
+    const weight = sampleWeight(games, priorGames) * confidence[id];
+    return [id, adjustedAnchor * (1 - weight) + performance * weight];
   }));
 }
 
-// Only a matching half-year snapshot can supply results without match details.
+const sampleWeight = (games, priorGames) => games ** 2 / (games ** 2 + priorGames ** 2);
+
+function participationConfidence(actual, history, ids, date, period, observations, aggregate, context) {
+  const totals = ids.map(id => observations[id].games + aggregate[id].games);
+  const positive = totals.filter(games => games > 0).sort((a, b) => a - b);
+  // A robust peer benchmark prevents one unusually busy member dominating.
+  const benchmark = positive[Math.ceil(positive.length * 0.75) - 1] || 1;
+  const meetings = new Map();
+  const add = (day, members) => {
+    if (!validDate(day) || day >= date || !withinPeriod(period, day)) return;
+    const known = members.filter(id => ids.includes(id));
+    if (!known.length) return;
+    if (!meetings.has(day)) meetings.set(day, new Set());
+    for (const id of known) meetings.get(day).add(id);
+  };
+  for (const session of context.sessions || []) {
+    if (!Array.isArray(session.fixedPlayerIds) || !Object.keys(session.matchMap || {}).length) continue;
+    add(session.date, session.fixedPlayerIds);
+  }
+  for (const record of actual) add(record.date, [...record.teamA, ...record.teamB].filter(id => record.fixedPlayerIds.includes(id)));
+  for (const row of datedHistory(history.filter(set => set.contributesToRatings !== false), period, actual)) if (!row.review && row.games > 0) add(row.date, [row.playerId]);
+  return Object.fromEntries(ids.map((id, index) => {
+    const firstSeen = new Map();
+    for (const [day, members] of meetings) if (members.has(id)) {
+      const q = quarter(day); if (!firstSeen.has(q) || day < firstSeen.get(q)) firstSeen.set(q, day);
+    }
+    let opportunities = 0, attended = 0;
+    for (const [day, members] of meetings) {
+      const configured = (context.periods || []).find(entry => entry.id === quarter(day));
+      const eligible = configured ? configured.memberIds.includes(id) && day >= (configured.startsOn || quarterBounds(configured.id).start) && day < (configured.endsBefore || quarterBounds(configured.id).endBefore) : firstSeen.has(quarter(day)) && day >= firstSeen.get(quarter(day));
+      if (!eligible) continue;
+      opportunities++; if (members.has(id)) attended++;
+    }
+    // Unknown attendance is neutral; four pseudo-attendances damp sparse dates.
+    const attendance = opportunities ? (attended + 4) / (opportunities + 4) : 1;
+    const volume = Math.min(1, totals[index] / benchmark);
+    return [id, (0.5 + 0.5 * volume) * (0.5 + 0.5 * attendance)];
+  }));
+}
+
+// Only a matching period snapshot can supply results without match details.
 // Remove already-observed games from each snapshot before applying a small
 // aggregate adjustment. No partner/opponent quality is inferred from these rows.
-function halfYearEvidence(history, actual, ids, date) {
-  const period = halfYear(date), cutoffLimit = date;
+function periodEvidence(history, actual, ids, date, period) {
+  const cutoffLimit = date;
   const output = Object.fromEntries(ids.map(id => [id, { games: 0, wins: 0, draws: 0, losses: 0 }]));
-  const start = `${date.slice(0, 4)}-${period.endsWith('H1') ? '01' : '07'}-01`;
+  const start = (period.includes('-H') ? halfYearBounds(period) : quarterBounds(period)).start;
   const snapshot = history.filter(set => set.kind === 'individual-aggregate' && set.contributesToRatings !== false && (set.period === period || set.aggregationRole === 'period-baseline') && set.periodStart === start && set.datePrecision === 'day' && validDate(set.cutoff) && withinPeriod(period, set.cutoff) && set.cutoff < cutoffLimit && set.status !== 'superseded').sort((a, b) => b.cutoff.localeCompare(a.cutoff))[0];
   const covered = new Set();
   if (snapshot) for (const row of snapshot.rows || []) {
@@ -80,7 +132,7 @@ function halfYearEvidence(history, actual, ids, date) {
     output[row.playerId] = { ...values, games: values.wins + values.draws + values.losses };
     covered.add(row.playerId);
   }
-  for (const row of datedHistory(history, period, actual)) {
+  for (const row of datedHistory(history.filter(set => set.contributesToRatings !== false), period, actual)) {
     if (!output[row.playerId] || row.date >= date || row.review || (covered.has(row.playerId) && row.date <= snapshot.cutoff)) continue;
     for (const key of ['games', 'wins', 'draws', 'losses']) output[row.playerId][key] += row[key];
   }

@@ -119,3 +119,69 @@ test('dated aggregates stay inside the half-year and covered days never count tw
   const actual = record(['gdr013', 'gdr009'], ['gdr006', 'gdr007'], 'teamA', { date: daily.cutoff });
   assert.deepEqual(strengthsForSession([actual], ids, baseline, date, [daily]), strengthsForSession([actual], ids, baseline, date));
 });
+
+const neutralIds = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
+const neutral = { priorGames: 24 };
+const neutralMatch = (day, outcome = 'teamA', teamA = ['a', 'b'], teamB = ['c', 'd']) => record(teamA, teamB, outcome, { date: day });
+const meeting = (day, members) => ({ date: day, fixedPlayerIds: members, participantIds: members, matchMap: { 'r1-c1': { teamA: members.slice(0, 2), teamB: members.slice(2, 4) } } });
+const neutralPeriods = [{ id: '2026-Q4', memberIds: neutralIds }];
+
+test('low relative game volume reduces trust in identical winning records', () => {
+  const sparse = Array(4).fill(neutralMatch('2026-10-04'));
+  const busyPeers = Array(24).fill(neutralMatch('2026-10-11', 'teamA', ['e', 'f'], ['g', 'h']));
+  const alone = strengthsForSession(sparse, neutralIds, neutral, date);
+  const relative = strengthsForSession([...sparse, ...busyPeers], neutralIds, neutral, date);
+  assert.ok(relative.a > 0.5 && relative.a < alone.a);
+  assert.ok(relative.c < 0.5 && relative.c > alone.c);
+});
+
+test('recorded attendance changes confidence, never rewards attendance as skill', () => {
+  const wins = Array(12).fill(neutralMatch('2026-10-04'));
+  const sessions = [meeting('2026-10-04', neutralIds.slice(0, 4)), ...['11', '18', '25'].map(day => meeting(`2026-10-${day}`, neutralIds.slice(4)))];
+  const allPresent = sessions.map(session => ({ ...session, fixedPlayerIds: neutralIds, participantIds: neutralIds }));
+  const low = strengthsForSession(wins, neutralIds, neutral, date, [], { sessions, periods: neutralPeriods });
+  const high = strengthsForSession(wins, neutralIds, neutral, date, [], { sessions: allPresent, periods: neutralPeriods });
+  assert.ok(low.a > 0.5 && low.a < high.a);
+  assert.ok(low.c < 0.5 && low.c > high.c);
+  const draws = wins.map(match => neutralMatch(match.date, 'draw'));
+  assert.deepEqual(strengthsForSession(draws, neutralIds, neutral, date, [], { sessions: allPresent, periods: neutralPeriods }), initialStrengths(neutralIds, neutral));
+  assert.deepEqual(strengthsForSession([], neutralIds, neutral, date, [], { sessions: allPresent, periods: neutralPeriods }), initialStrengths(neutralIds, neutral));
+});
+
+test('current quarter form nudges identical half-year win rates without double-counting samples', () => {
+  const results = (goodQuarter) => [
+    ...Array(12).fill(neutralMatch('2026-09-27', goodQuarter ? 'teamB' : 'teamA')),
+    ...Array(4).fill(neutralMatch('2026-09-27', goodQuarter ? 'teamA' : 'teamB')),
+    ...Array(12).fill(neutralMatch('2026-10-04', goodQuarter ? 'teamA' : 'teamB')),
+    ...Array(4).fill(neutralMatch('2026-10-04', goodQuarter ? 'teamB' : 'teamA')),
+  ];
+  const improving = strengthsForSession(results(true), neutralIds, neutral, date);
+  const declining = strengthsForSession(results(false), neutralIds, neutral, date);
+  assert.ok(improving.a > 0.5 && declining.a < 0.5);
+  assert.ok(improving.a - 0.5 < 0.04);
+  assert.ok(Math.abs(improving.a + declining.a - 1) < 1e-12);
+  const onlyQ3 = results(true).filter(match => match.date.startsWith('2026-09'));
+  assert.deepEqual(strengthsForSession(onlyQ3, neutralIds, neutral, date), strengthsForSession(onlyQ3, neutralIds, neutral, '2026-10-01'));
+});
+
+test('attendance excludes other half-years, future dates, duplicates and pre-membership meetings', () => {
+  const wins = Array(12).fill(neutralMatch('2026-10-04'));
+  const base = meeting('2026-10-04', neutralIds.slice(0, 4));
+  const context = { sessions: [base], periods: neutralPeriods };
+  const expected = strengthsForSession(wins, neutralIds, neutral, date, [], context);
+  const excluded = ['2026-06-28', date, '2026-11-08'].map(day => meeting(day, neutralIds.slice(4)));
+  excluded.push(meeting('2026-10-18', ['guest001', 'guest002', 'guest003', 'guest004']));
+  assert.deepEqual(strengthsForSession(wins, neutralIds, neutral, date, [], { ...context, sessions: [base, base, ...excluded] }), expected);
+  const earlier = meeting('2026-10-01', neutralIds.slice(4));
+  const lateMembers = [{ ...neutralPeriods[0], startsOn: '2026-10-04' }];
+  assert.deepEqual(strengthsForSession(wins, neutralIds, neutral, date, [], { sessions: [earlier, base], periods: lateMembers }), expected);
+});
+
+test('unseparable H2 aggregates do not become invented Q4 form or attendance', () => {
+  const snapshot = { kind: 'individual-aggregate', period: '2026-H2', periodStart: '2026-07-01', datePrecision: 'day', cutoff: '2026-10-04', rows: [{ playerId: 'a', stats: { games: 24, wins: 24, draws: 0, losses: 0 } }] };
+  const expected = strengthsForSession([], neutralIds, neutral, date, [snapshot]);
+  assert.deepEqual(expected, strengthsForSession([], neutralIds, neutral, '2026-10-11', [snapshot]));
+  assert.ok(expected.a > 0.5 && expected.a - 0.5 <= 0.03);
+  const daily = { kind: 'daily-individual-aggregate', contributesToRatings: false, cutoff: '2026-10-11', datePrecision: 'day', rows: [{ playerId: 'a', stats: { wins: 20, draws: 0, losses: 0, scored: 120, conceded: 20 } }] };
+  assert.deepEqual(strengthsForSession([], neutralIds, neutral, date, [snapshot, daily]), expected);
+});
