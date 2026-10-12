@@ -136,7 +136,7 @@ function createDialog() {
       button.disabled = true;
       try {
         // Files are prepared before this click so mobile user activation remains valid.
-        await navigator.share({ files: filesToShare(), title: shareBundle ? control('image-title').textContent : item.page.title || `GDR ${item.page.date} 대진표` });
+        await navigator.share({ files: filesToShare() });
       } catch (error) {
         if (error.name !== 'AbortError') control('image-status').textContent = '공유하지 못했습니다. 이미지를 저장한 뒤 카카오톡에 첨부해 주세요.';
       } finally { if (dialog.open && images.length) button.disabled = !supportsShare(filesToShare()); }
