@@ -22,6 +22,7 @@ import { readHistory } from './history-store.js';
 import { generationOf, resultFor } from './session-lifecycle.js';
 import { defaultScheduleDate, scheduleDates, renderRounds } from './schedule-display.js';
 import { openCancellation } from './cancel-dialog.js';
+import { openScheduleEditor } from './schedule-editor.js';
 const courtName = court => court === 1 ? '안쪽' : '바깥쪽';
 const $ = selector => document.querySelector(selector);
 const names = Object.fromEntries(players.map(p => [p.id, p.name]));
@@ -134,7 +135,7 @@ function renderSchedule() {
   const prepExceptions = (session.lockedPairs || []).reduce((sum, [a, b]) => sum + counts[a] - entries.filter(([, m]) => [m.teamA, m.teamB].some(team => team.includes(a) && team.includes(b))).length, 0);
   const maxGames = session.endTime ? meetingWindow(session.startTime, session.endTime) : Math.max(...Object.values(counts));
   const allocation = `<div class="allocation"><div class="panel-top"><h3>개인별 경기 수</h3><span>이번 모임</span></div><div class="allocation-grid">${session.participantIds.map(id => `<label><span>${esc(labels[id])}</span>${saved ? `<strong>${counts[id]}경기</strong>` : `<select data-quota="${id}" aria-label="${esc(labels[id])} 경기 수">${Array.from({ length: Math.max(0, maxGames - 1) }, (_, i) => i + 2).map(n => `<option value="${n}" ${counts[id] === n ? 'selected' : ''}>${n}경기</option>`).join('')}</select>`}</label>`).join('')}</div>${!saved ? '<p class="hint">개인 경기 수를 바꾸면 다시 배정됩니다. 총합은 4의 배수여야 합니다.</p><button id="apply-quotas" class="text-button">경기 수 조정 적용 →</button>' : ''}${session.lockedPairs?.length ? `<p class="hint">고정 페어 ${session.lockedPairs.length}조 적용${prepExceptions ? ` · 참석 인원상 ${prepExceptions}회는 다른 파트너로 출전` : ''}</p>` : ''}${session.partnerRepeats ? `<p class="hint">같은 파트너 ${session.partnerRepeats}회 반복. 참가 인원·경기 수에 따른 배정입니다.</p>` : '<p class="hint">같은 파트너 중복 없이 배정.</p>'}</div>`;
-  content.innerHTML = `<div class="schedule-meta"><div><span class="label-tag">${saved ? '저장된 대진' : '대진 미리보기'}</span><strong>${entries.length}경기 · ${rounds.length}라운드</strong><span>${session.startTime}${session.endTime ? `–${session.endTime}` : ''}</span><span>${completed}/${entries.length} 점수 입력</span></div><div>${saved ? `<button class="secondary" id="view-saved">대진표 보기</button><button class="secondary" id="print">인쇄</button><button class="cancel-schedule" id="cancel-schedule" ${!writable ? 'disabled' : ''}>대진 취소</button>` : `<button class="secondary" id="edit-schedule">참석·시간 수정</button><button class="secondary" id="regenerate">다시 배정</button><button class="primary" id="save-schedule" ${!writable ? 'disabled' : ''}>대진 확정·저장</button>`}</div></div>
+  content.innerHTML = `<div class="schedule-meta"><div><span class="label-tag">${saved ? '저장된 대진' : '대진 미리보기'}</span><strong>${entries.length}경기 · ${rounds.length}라운드</strong><span>${session.startTime}${session.endTime ? `–${session.endTime}` : ''}</span><span>${completed}/${entries.length} 점수 입력</span></div><div>${saved ? `<button class="secondary" id="view-saved">대진표 보기</button><button class="secondary" id="print">인쇄</button><button class="cancel-schedule" id="cancel-schedule" ${!writable ? 'disabled' : ''}>대진 취소</button>` : `<button class="secondary" id="manual-schedule">대진 직접 수정</button><button class="secondary" id="edit-schedule">참석·시간 수정</button><button class="secondary" id="regenerate">다시 배정</button><button class="primary" id="save-schedule" ${!writable ? 'disabled' : ''}>대진 확정·저장</button>`}</div></div>
 ${prepExceptions ? `<p class="prep-exception-note">고정 페어는 참석 인원상 ${prepExceptions}회 다른 파트너로 출전합니다.</p>` : ''}
 <div class="schedule-image-tools"><button id="export-image" class="secondary">이미지 저장·공유</button><p>사진으로 보관하거나 카카오톡으로 보내세요.</p></div>
 
@@ -283,6 +284,14 @@ $('#app').addEventListener('click', async event => {
     else if (button.id === 'select-all') { const ids = [...membersForPeriod(date, players, periods, state.sessions).map(p => p.id), ...Object.keys(guests)]; selected = new Set(selected.size === ids.length ? [] : ids); draft = null; renderAttendees(); renderPrep(); renderSchedule(); }
     else if (button.id === 'export-image') { const session = state.sessions[date] || draft; if (session) await openScheduleImage(session, names, state.results, !!state.sessions[date]); }
     else if (button.id === 'export-record-images') { await openRecordImages(recordsFrom(state), scopedPlayers(imagePeriod), imagePeriod, $('#stats-date').value, historySets); }
+    else if (button.id === 'manual-schedule') {
+      const editingDraft = draft;
+      if (!editingDraft || state.sessions[date]) throw new Error('확정 전 미리보기에서만 수정할 수 있습니다.');
+      openScheduleEditor(editingDraft, names, changed => {
+        if (draft !== editingDraft || state.sessions[editingDraft.date] || date !== editingDraft.date) throw new Error('대진이 변경됐습니다. 최신 미리보기에서 다시 수정해 주세요.');
+        draft = changed; renderSchedule(); toast('수정한 대진을 적용했습니다. 확정·저장 전까지는 공유되지 않습니다.');
+      });
+    }
     else if (button.id === 'edit-schedule') { draft = null; renderSchedule(); $('#builder').scrollIntoView({ block: 'start', behavior: 'smooth' }); }
     else if (button.id === 'generate' || button.id === 'regenerate') { build(); $('#schedule-content').scrollIntoView({ block: 'start', behavior: 'smooth' }); toast('대진을 만들었습니다. 확인 후 확정해 주세요.'); }
     else if (button.id === 'apply-quotas') { build(Object.fromEntries([...document.querySelectorAll('[data-quota]')].map(select => [select.dataset.quota, Number(select.value)]))); toast('개인 경기 수를 반영했습니다.'); }
