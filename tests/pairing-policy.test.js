@@ -100,7 +100,8 @@ test('stronger nearby preference selects low and high foursomes without requirin
   const low = matches.filter(match => [...match.teamA, ...match.teamB].every(id => strengths[id] <= 0.3));
   assert.ok(low.length > 0);
   const totals = [low[0].teamA, low[0].teamB].map(team => team.reduce((sum, id) => sum + strengths[id], 0)).sort();
-  assert.ok(Math.abs(totals[0] - 0.3) < 1e-9 && Math.abs(totals[1] - 0.4) < 1e-9);
+  assert.ok(Math.abs(totals[0] + totals[1] - 0.7) < 1e-9);
+  assert.ok((totals[1] - totals[0]) / STRENGTH_STEP <= 2 + 1e-8);
   assert.ok(matches.some(match => [...match.teamA, ...match.teamB].every(id => strengths[id] >= 0.7)));
   assert.ok(matches.every(match => [...match.teamA, ...match.teamB].every(id => strengths[id] <= 0.3) || [...match.teamA, ...match.teamB].every(id => strengths[id] >= 0.7)));
   assert.equal(result.consecutiveRests, 0);

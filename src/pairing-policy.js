@@ -1,7 +1,7 @@
 import { validDate } from './model.js';
 import { halfYear, withinPeriod } from './periods.js';
 
-export const STRENGTH_STEP = 0.8 / 6;
+export const STRENGTH_STEP = 0.8 / 5;
 export const TEAM_GAP_ALLOWANCE = 2 * STRENGTH_STEP;
 // Stable roster IDs: 허근화, 장재혁. One shared group for daily partner rotation.
 export const ROTATING_PLAYERS = ['gdr011', 'gdr010'];
