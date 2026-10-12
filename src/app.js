@@ -22,6 +22,8 @@ import { readHistory } from './history-store.js';
 import { generationOf, resultFor } from './session-lifecycle.js';
 import { defaultScheduleDate, scheduleDates, renderRounds } from './schedule-display.js';
 import { openCancellation } from './cancel-dialog.js';
+import { mountAdminView } from './admin-view.js';
+import { validateAssistantPlan } from './assistant-plan.js';
 const courtName = court => court === 1 ? '안쪽' : '바깥쪽';
 const $ = selector => document.querySelector(selector);
 const names = Object.fromEntries(players.map(p => [p.id, p.name]));
@@ -63,6 +65,32 @@ $('#app').innerHTML = `
 <section id="members-view" hidden><div class="section-heading"><div><h2>우리 클럽 멤버</h2><p id="member-summary"></p></div><label class="period-control"><span>멤버 보기</span><select id="member-period"><option value="all">전체 멤버 ${players.length}명</option>${periods.map(period => `<option value="${period.id}">${period.label} ${period.memberIds.length}명</option>`).join('')}</select></label></div><div class="gender-legend"><span><i class="male-dot"></i>남성</span><span><i class="female-dot"></i>여성</span></div><div class="member-grid" id="member-grid"></div><div class="backup-panel"><div><h3>기록 보관</h3><p>${firebaseConfigured ? '공유 DB의 대진과 점수를 백업 파일로 보관할 수 있습니다.' : '로컬 기록은 이 브라우저에 저장됩니다. 백업 파일로 보관해 주세요.'}</p></div><div class="backup-actions"><button id="backup" class="secondary">백업 내려받기</button>${!firebaseConfigured ? '<label class="secondary file-label">백업 가져오기<input id="import" type="file" accept="application/json,.json"></label>' : ''}</div></div></section>
 <footer><span>GDR TENNIS CLUB</span><span>매 경기, 함께 쌓는 기록.</span></footer></main><div id="toast" role="status" aria-live="polite" hidden></div>`;
 setupTheme($('#theme-toggle'));
+document.querySelector('footer').insertAdjacentHTML('beforebegin', '<section id="assistant-view" hidden></section>');
+const adminView = mountAdminView({ element: $('#assistant-view'), names,
+  getContext: () => ({ plan: { date, startTime, endTime, participantIds: [...selected], guests: Object.entries(guests).map(([id, guest]) => ({ id, name: guest.name })), lockedPairs: pairsEnabled ? lockedPairs.filter(pair => pair.every(id => selected.has(id))) : [], timingPreferences: Object.entries(timingPreferences).filter(([id]) => selected.has(id)).map(([playerId, preference]) => ({ playerId, preference })), quotas: [] } }),
+  applyPlan: plan => {
+    if (!hasSnapshot || !historyReady) throw new Error('공유 기록을 불러온 뒤 미리보기를 만들어 주세요.');
+    validateAssistantPlan(plan, membersForPeriod(plan.date, players, periods).map(p => p.id));
+    if (state.sessions[plan.date]) throw new Error('이미 확정된 날짜입니다. 다른 모임 날짜를 지정해 주세요.');
+    const before = { date, startTime, endTime, selected, guests, lockedPairs, pairsEnabled, timingPreferences, draft };
+    try {
+      date = plan.date; startTime = plan.startTime; endTime = plan.endTime;
+      selected = new Set(plan.participantIds); guests = Object.fromEntries(plan.guests.map(({ id, name }) => [id, { name }]));
+      lockedPairs = plan.lockedPairs; pairsEnabled = true;
+      timingPreferences = Object.fromEntries(plan.timingPreferences.map(({ playerId, preference }) => [playerId, preference]));
+      $('#date').value = date; syncMeetingTimes(); renderAttendees();
+      build(plan.quotas.length ? Object.fromEntries(plan.quotas.map(({ playerId, games }) => [playerId, games])) : undefined);
+      switchTab('manage'); toast('대진 미리보기를 만들었습니다. 확인 후 확정해 주세요.');
+    } catch (error) {
+      ({ date, startTime, endTime, selected, guests, lockedPairs, pairsEnabled, timingPreferences, draft } = before);
+      $('#date').value = date; syncMeetingTimes(); renderAttendees(); renderSchedule(); throw error;
+    }
+  },
+});
+if (import.meta.env.VITE_ADMIN_CHAT_ENABLED === 'true') {
+  document.querySelector('.header-actions').insertAdjacentHTML('afterbegin', '<button id="open-admin" class="text-button" type="button">관리자</button>');
+  $('#open-admin').addEventListener('click', () => { switchTab('assistant'); adminView.open(); });
+}
 const personalView = mountPersonalView({ element: $('#personal-view'), players, getRecords: () => recordsFrom(state), getSessions: () => state.sessions, isReady: () => hasSnapshot, openDate: value => { viewerDate = value; viewerPlayer = ''; renderViewer(); switchTab('schedule'); window.scrollTo({ top: 0, behavior: 'smooth' }); } });
 const archiveView = mountArchiveView({ element: $('#archive-records'), players, openPlayer: (id, dataset) => { personalView.selectArchive(id, dataset); switchTab('personal'); window.scrollTo({ top: 0, behavior: 'smooth' }); } });
 function toast(message) { $('#toast').textContent = message; $('#toast').hidden = false; clearTimeout(toast.timer); toast.timer = setTimeout(() => $('#toast').hidden = true, 5500); }
@@ -221,7 +249,7 @@ function switchTab(value) {
   const returnToTabs = window.matchMedia('(max-width: 600px)').matches && headingBottom < 0;
   tab = value;
   document.querySelectorAll('[data-tab]').forEach(button => button.setAttribute('aria-selected', String(button.dataset.tab === tab)));
-  for (const name of ['schedule', 'manage', 'ranking', 'personal', 'members']) $(`#${name}-view`).hidden = name !== tab;
+  for (const name of ['schedule', 'manage', 'ranking', 'personal', 'members', 'assistant']) $(`#${name}-view`).hidden = name !== tab;
 
   if (returnToTabs) window.scrollTo({ top: tabsTop, behavior: 'instant' });
 }
