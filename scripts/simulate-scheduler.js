@@ -36,7 +36,7 @@ const cases = [
   { name: '10 members, 4 rounds', ids: ids10, rounds: 4 },
   { name: '14 members, 6 rounds', ids: ids14, rounds: 6 },
   { name: '8–14 changing attendees', ids: ids14, rounds: 4, variable: true },
-  { name: '14 members, 7 fixed pairs', ids: ids14, rounds: 4, lockedPairs: baseline.groups },
+  { name: '14 members, 7 fixed pairs', ids: ids14, rounds: 4, lockedPairs: baseline.groups.flatMap(group => Array.from({ length: group.length / 2 }, (_, index) => group.slice(index * 2, index * 2 + 2))) },
   { name: '14 members, changing ratings', ids: ids14, rounds: 4, drift: true },
   { name: '14 members and 2 guests', ids: [...ids14, 'guest001', 'guest002'], rounds: 4 },
 ];
@@ -89,7 +89,7 @@ for (const scenario of cases) for (const version of versions) {
       if (active.every(id => baseline.groups.slice(0, 2).flat().includes(id))) cohorts.top++;
       if (active.every(id => baseline.groups.slice(-2).flat().includes(id))) cohorts.bottom++;
       if (active.every(id => baseline.groups.slice(0, 3).flat().includes(id))) cohorts.upperSix++;
-      if (active.every(id => baseline.groups.slice(-3).flat().includes(id))) cohorts.lowerSix++;
+      if (active.every(id => baseline.groups.flat().slice(-6).includes(id))) cohorts.lowerSix++;
       const activeStrengths = active.map(id => strengths[id]);
       if (Math.max(...activeStrengths) - Math.min(...activeStrengths) <= 2 * STRENGTH_STEP + 1e-8) cohorts.withinTwoSteps++;
       for (const pair of scenario.lockedPairs || []) if (active.includes(pair[0]) && ![match.teamA, match.teamB].some(team => pair.every(id => team.includes(id)))) throw new Error('Fixed pair changed.');
