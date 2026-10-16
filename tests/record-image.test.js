@@ -31,7 +31,7 @@ test('daily and cumulative pictures remain separate; invalid scores and other pe
   assert.throws(() => recordImagePages([], players, 'all', '2026-10-04'), /점수/);
 });
 test('no guest, unplayed member or internal rating appears in exported statistics', () => {
-  const records = [game('2026-10-04', { teamA: ['a', 'guest001'], fixedPlayerIds: ['a', 'c', 'd'], guests: { guest001: { name: '게스트' } }, strengths: { a: 0.9 } })];
+  const records = [game('2026-10-04', { teamA: ['a', 'guest001'], fixedPlayerIds: ['a', 'b', 'c', 'd'], guests: { guest001: { name: '게스트' } }, strengths: { a: 0.9 } })];
   const pages = recordImagePages(records, [...players, { id: 'guest001', name: '게스트' }], 'all', '2026-10-04');
   assert.deepEqual(pages[0].rows.map(row => row.id), ['a', 'c', 'd']);
   assert.equal(JSON.stringify(pages).includes('strengths'), false);

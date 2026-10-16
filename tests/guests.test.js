@@ -22,11 +22,13 @@ test('guest names are validated; unregistered identities and guests counted as m
   assert.deepEqual(decodeSession(encodeSession(session), Object.values(encodeRounds(session))), session);
 });
 
-test('guest names survive saved records and image export without entering member rankings', () => {
-  const records = recordsFrom({ sessions: { [session.date]: session }, results: { '2026-10-11_r1-c1': { scoreA: 6, scoreB: 4, outcome: 'teamA' } } });
+test('three members with a guest retain raw scores and images but do not enter official rankings', () => {
+  const state = { sessions: { [session.date]: session }, results: { '2026-10-11_r1-c1': { scoreA: 6, scoreB: 4, outcome: 'teamA' } } };
+  assert.deepEqual(recordsFrom(state), []);
+  const records = recordsFrom(state, { includeUnofficial: true });
   assert.equal(records[0].guests.guest001.name, '홍길동');
   const rows = ranking(records, [...players, { id: 'guest001', name: '홍길동' }]);
-  assert.equal(rows.find(row => row.id === 'a').points, 3);
+  assert.equal(rows.find(row => row.id === 'a').points, 0);
   assert.equal(rows.find(row => row.id === 'guest001').games, 0);
   const names = Object.fromEntries(players.map(player => [player.id, player.name]));
   assert.equal(sessionNames(session, names).guest001, '홍길동');
@@ -40,10 +42,10 @@ test('guests receive at least two games and use the supplied above-middle prior 
   validateSession({ ...session, matchMap: generated.matchMap }, ['a', 'b', 'c']);
   assert.equal(Object.values(generated.matchMap).filter(match => [...match.teamA, ...match.teamB].includes('guest001')).length, 2);
   assert.equal(GUEST_STRENGTH, 0.65);
-  const record = { ...match, date: '2026-10-11', scoreA: 6, scoreB: 4, outcome: 'teamA', fixedPlayerIds: ['a', 'b', 'c'], guests };
-  const values = strengthsForSession([record], ['a', 'b', 'c'], {}, '2026-10-18');
+  const record = { ...match, date: '2026-10-11', scoreA: 6, scoreB: 4, outcome: 'teamA', fixedPlayerIds: ['a', 'b', 'c', 'd'], guests };
+  const values = strengthsForSession([record], ['a', 'b', 'c', 'd'], {}, '2026-10-18');
   const expected = 1 / (1 + Math.exp(-4 * ((0.5 + GUEST_STRENGTH) / 2 - 0.5)));
   assert.ok(Math.abs(values.a - (0.5 + (1 - expected) / (1 + 24 ** 2))) < 1e-10);
   assert.equal(values.guest001, undefined);
-  assert.deepEqual(strengthsForSession([{ ...record, guests: {} }], ['a', 'b', 'c'], {}, '2026-10-18'), initialStrengths(['a', 'b', 'c']));
+  assert.deepEqual(strengthsForSession([{ ...record, guests: {} }], ['a', 'b', 'c', 'd'], {}, '2026-10-18'), initialStrengths(['a', 'b', 'c', 'd']));
 });

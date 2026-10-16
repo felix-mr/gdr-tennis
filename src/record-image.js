@@ -1,10 +1,10 @@
-import { validResult } from './model.js';
+import { validResult, isOfficialMeeting } from './model.js';
 import { baselineHistory, datedHistory, rankingWithHistory } from './history-stats.js';
 import { withinPeriod, periodLabel } from './periods.js';
 import { openImagePages } from './schedule-image.js';
 
 export function recordImagePages(records, players, value, date, history = []) {
-  const scoped = records.filter(record => validResult(record) && withinPeriod(value, record.date));
+  const scoped = records.filter(record => isOfficialMeeting(record) && validResult(record) && withinPeriod(value, record.date));
   const daily = scoped.filter(record => record.date === date);
   if (!withinPeriod(value, date)) throw new Error('선택한 기간 안의 모임 날짜를 선택해 주세요.');
   const hasDaily = daily.length || datedHistory(history, date, records).length;

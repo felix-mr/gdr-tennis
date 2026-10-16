@@ -16,7 +16,7 @@ test('personal results use selected player side, draws and canonical opponent pa
 });
 
 test('guest partner identity remains meeting-local; invalid and duplicate matches excluded', () => {
-  const first = game({ teamA: ['a', 'guest001'], fixedPlayerIds: ['a', 'c', 'd'], guests: { guest001: { name: '손님1' } } });
+  const first = game({ teamA: ['a', 'guest001'], fixedPlayerIds: ['a', 'c', 'd', 'e'], guests: { guest001: { name: '손님1' } } });
   const next = { ...first, date: '2026-10-11', guests: { guest001: { name: '손님2' } } };
   const rows = personalMatchups([first, first, next, null, game({ teamA: 'ab' }), game({ date: 'invalid' }), game({ scoreA: -1 }), game({ round: 8, teamB: ['a', 'd'] })], 'a');
   assert.equal(rows.total.games, 2); assert.equal(rows.partners.length, 2); assert.equal(rows.opponents.length, 1);

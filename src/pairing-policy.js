@@ -1,4 +1,4 @@
-import { validDate } from './model.js';
+import { validDate, isOfficialMeeting } from './model.js';
 import { halfYear, withinPeriod } from './periods.js';
 
 export const STRENGTH_STEP = 0.8 / 5;
@@ -20,7 +20,7 @@ export function recentPairingHistory(schedules, date, ids) {
   const partners = {}, opponents = {}, expected = {}, allowed = new Set(ids);
   if (!validDate(date)) return { partners, opponents };
   const dated = new Map();
-  for (const session of schedules) if (validDate(session?.date) && session.date < date && withinPeriod(halfYear(date), session.date)) dated.set(session.date, session);
+  for (const session of schedules) if (isOfficialMeeting(session) && validDate(session?.date) && session.date < date && withinPeriod(halfYear(date), session.date)) dated.set(session.date, session);
   const recent = [...dated.values()].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 6);
   for (const [index, session] of recent.entries()) {
     if (!Array.isArray(session.participantIds) || !Array.isArray(session.fixedPlayerIds)) continue;

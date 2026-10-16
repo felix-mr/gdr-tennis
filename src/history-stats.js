@@ -1,8 +1,15 @@
-import { validDate, ranking, rankStats } from './model.js';
+import { validDate, ranking, rankStats, isOfficialMeeting } from './model.js';
 import { withinPeriod } from './periods.js';
 
+// Keep unverifiable legacy totals intact; suppress dated imports only when
+// attendance is explicitly known to be below the club threshold.
+export function historyForOfficialMeetings(sets, sessions = []) {
+  const excluded = new Set(sessions.filter(session => !isOfficialMeeting(session)).map(session => session.date));
+  return sets.filter(set => set.kind !== 'daily-individual-aggregate' || (!excluded.has(set.cutoff) && (!Object.hasOwn(set, 'fixedPlayerIds') || isOfficialMeeting(set))));
+}
+
 export function normalizeDailyRows(dataset) {
-  if (dataset.kind !== 'daily-individual-aggregate' || dataset.contributesToLiveRanking === false || dataset.status === 'superseded' || dataset.datePrecision !== 'day' || !validDate(dataset.cutoff)) return [];
+  if (dataset.kind !== 'daily-individual-aggregate' || dataset.contributesToLiveRanking === false || dataset.status === 'superseded' || dataset.datePrecision !== 'day' || !validDate(dataset.cutoff) || (Object.hasOwn(dataset, 'fixedPlayerIds') && !isOfficialMeeting(dataset))) return [];
   return dataset.rows.flatMap(row => {
     const stats = row.stats;
     if (!row.playerId || !stats || !['wins', 'draws', 'losses', 'scored', 'conceded'].every(key => Number.isInteger(stats[key]) && stats[key] >= 0)) return [];
@@ -39,7 +46,8 @@ export function historicalPlayers(sets, players) {
 export function rankingWithHistory(records, players, period, sets) {
   const baselines = baselineHistory(sets, period);
   const covered = (id, date) => baselines.some(row => row.playerId === id && date >= row.coverageStart && date <= row.date);
-  const actual = records.filter(record => withinPeriod(period, record.date)).map(record => ({ ...record, fixedPlayerIds: record.fixedPlayerIds.filter(id => !covered(id, record.date)) }));
+  // Preserve meeting attendance while masking members already counted by totals.
+  const actual = records.filter(record => withinPeriod(period, record.date)).map(record => ({ ...record, clubMemberIds: record.clubMemberIds || record.fixedPlayerIds, fixedPlayerIds: record.fixedPlayerIds.filter(id => !covered(id, record.date)) }));
   const rows = new Map(ranking(actual, players).map(row => [row.id, { ...row, historyGames: 0, baselineGames: 0, historyReview: false }]));
   const dated = datedHistory(sets, period, records).filter(row => !covered(row.playerId, row.date));
   for (const old of [...baselines, ...dated]) {

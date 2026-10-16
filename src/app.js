@@ -2,12 +2,12 @@ import './style.css';
 import './theme.css';
 import { setupTheme } from './theme.js';
 import { mountArchiveView } from './archive-view.js';
-import { baselineHistory, datedHistory, historicalPlayers, rankingWithHistory } from './history-stats.js';
+import { baselineHistory, datedHistory, historicalPlayers, rankingWithHistory, historyForOfficialMeetings } from './history-stats.js';
 import playerData from '../data/players.json';
 const players = [...playerData].sort((a, b) => a.name.localeCompare(b.name, 'ko'));
 import periods from '../data/periods.json';
 import baseline from '../data/strength-baseline.json';
-import { koreaToday, nextSunday, quarter, recordsFrom, outcome, meetingWindow, validDate } from './model.js';
+import { koreaToday, nextSunday, quarter, recordsFrom, outcome, meetingWindow, validDate, isOfficialMeeting, clubMemberCount } from './model.js';
 import { allocateForWindow, generateSchedule } from './scheduler.js';
 import { strengthsForSession } from './ratings.js';
 import { createStore, firebaseConfigured } from './store.js';
@@ -28,7 +28,7 @@ const $ = selector => document.querySelector(selector);
 const names = Object.fromEntries(players.map(p => [p.id, p.name]));
 const esc = value => String(value).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const team = (ids, profiles = state.sessions[date]?.guests || guests) => { const labels = sessionNames({ guests: profiles }, names); return ids.map(id => `<span class="team-player">${esc(labels[id] || id)}</span>`).join(' <span class="dot">·</span> '); };
-let state = { schemaVersion: 1, sessions: {}, results: {} }, draft = null, store, writable = false, historySets = [];
+let state = { schemaVersion: 1, sessions: {}, results: {} }, draft = null, store, writable = false, historySets = [], sourceHistorySets = [];
 let hasSnapshot = false, historyReady = !firebaseConfigured;
 let lockedPairs = [], prepSelection = new Set(), pairsEnabled = true;
 let timingPreferences = {};
@@ -54,7 +54,7 @@ $('#app').innerHTML = `
 <section id="schedule-view"><div class="section-heading"><div><h2>대진표</h2></div><label class="period-control"><span>모임 날짜</span><select id="viewer-date"></select></label></div><div id="viewer-content"></div></section>
 <section id="manage-view" hidden>
 <div class="section-heading"><div><h2>대진 편성</h2><p>참석자·시간·고정 페어를 정하고 대진을 확정하세요.</p></div><label class="date-control">모임 날짜<input id="date" type="date" value="${date}" required></label></div>
-<div class="builder" id="builder"><div class="panel-top"><h3>참석 멤버 <span id="selected-count"></span></h3><button id="select-all" class="text-button">전체 해제</button></div><p id="roster-note" class="hint" hidden></p><div class="player-grid" id="attendees"></div>
+<div class="builder" id="builder"><div class="panel-top"><h3>참석 멤버 <span id="selected-count"></span></h3><button id="select-all" class="text-button">전체 해제</button></div><p id="roster-note" class="hint" hidden></p><div class="player-grid" id="attendees"></div><p id="attendance-rule" class="hint" role="status"></p>
 <div class="guest-section"><div class="panel-top"><h3>게스트 <span id="guest-count">0명</span></h3><button id="add-guest" class="secondary" aria-expanded="false" aria-controls="guest-editor">게스트 +</button></div><div id="guest-editor" hidden><form id="guest-form" class="guest-form"><label class="sr-only" for="guest-name">게스트 이름</label><input id="guest-name" name="guestName" type="text" maxlength="12" placeholder="게스트 이름" required autocomplete="off" enterkeyhint="done"><button class="primary" type="submit">추가</button><button id="cancel-guest" class="text-button" type="button">취소</button></form></div><div id="guests" class="guest-grid"></div><p class="hint">함께 경기할 게스트의 이름을 입력해 주세요. 회원 순위에는 포함되지 않습니다.</p></div>
 <div class="session-settings"><div class="time-setting"><span class="setting-label">모임 시간</span><div class="time-range"><label><span>시작</span><select id="start" aria-label="모임 시작 시간">${timeOptions(startTime)}</select></label><span class="range-arrow">→</span><label><span>종료</span><select id="end" aria-label="모임 종료 시간">${timeOptions(endTime)}</select></label></div><div class="time-presets" role="group" aria-label="자주 쓰는 모임 시간"><button data-meeting-time="19:00/21:00" aria-pressed="true">19:00–21:00</button><button data-meeting-time="19:00/22:00" aria-pressed="false">19:00–22:00</button></div><p class="time-hint">24시간 표기 · 30분 단위 · 같은 날 기준</p></div><div class="court-info"><span class="court-icon" aria-hidden="true"></span><div><strong>2면</strong><span>복식 · 30분 고정</span></div></div></div>
 <details id="pair-settings" class="pair-settings"><summary><span>고정 페어</span><small id="pair-summary"></small></summary><label class="pair-setting-toggle"><span><strong>등록한 페어 유지하기</strong><small>대회 준비 등 같은 파트너와 출전할 때 켜 주세요.</small></span><input id="pairs-enabled" type="checkbox" ${pairsEnabled ? 'checked' : ''} role="switch"></label><div class="prep-editor"><div class="panel-top"><h3>멤버 두 명 선택</h3><span id="prep-selection-count">0 / 2</span></div><div id="prep-candidates" class="prep-candidates"></div><div class="prep-selection-footer"><p id="prep-selection-label">함께할 두 멤버를 선택해 주세요.</p><button id="add-prep-pair" class="primary" disabled>페어 등록</button></div></div><div class="section-heading prep-list-heading"><h3>등록된 페어 <span id="prep-pair-count">0조</span></h3><p>두 명 모두 참석한 페어에 적용합니다.</p></div><div id="prep-pairs" class="prep-pairs"></div><p class="prep-footnote">등록한 페어는 이 기기에 유지됩니다. 한 명이 불참하면 해당 모임에는 적용하지 않습니다.</p></details><details id="timing-settings" class="pair-settings"><summary><span>경기 순서</span><small id="timing-summary"></small></summary><p class="timing-note">경기 수와 휴식 간격을 먼저 맞추고, 선택은 가능한 범위에서 반영합니다. 이 모임에만 적용됩니다.</p><div id="timing-members" class="timing-members"></div></details><div class="builder-bottom"><p>그날 참석 인원·모임 시간에 맞춰 자동 배정.<br>1인 최소 2경기 · 경기 수 차이는 최대 1경기.</p><button id="generate" class="primary">대진 만들기 <span>↗</span></button></div></div>
@@ -64,7 +64,7 @@ $('#app').innerHTML = `
 <section id="members-view" hidden><div class="section-heading"><div><h2>우리 클럽 멤버</h2><p id="member-summary"></p></div><label class="period-control"><span>멤버 보기</span><select id="member-period"><option value="all">전체 멤버 ${players.length}명</option>${periods.map(period => `<option value="${period.id}">${period.label} ${period.memberIds.length}명</option>`).join('')}</select></label></div><div class="gender-legend"><span><i class="male-dot"></i>남성</span><span><i class="female-dot"></i>여성</span></div><div class="member-grid" id="member-grid"></div><div class="backup-panel"><div><h3>기록 보관</h3><p>${firebaseConfigured ? '공유 DB의 대진과 점수를 백업 파일로 보관할 수 있습니다.' : '로컬 기록은 이 브라우저에 저장됩니다. 백업 파일로 보관해 주세요.'}</p></div><div class="backup-actions"><button id="backup" class="secondary">백업 내려받기</button>${!firebaseConfigured ? '<label class="secondary file-label">백업 가져오기<input id="import" type="file" accept="application/json,.json"></label>' : ''}</div></div></section>
 <footer><span>GDR TENNIS CLUB</span><span>매 경기, 함께 쌓는 기록.</span></footer></main><div id="toast" role="status" aria-live="polite" hidden></div>`;
 setupTheme($('#theme-toggle'));
-const personalView = mountPersonalView({ element: $('#personal-view'), players, getRecords: () => recordsFrom(state), getSessions: () => state.sessions, isReady: () => hasSnapshot, openDate: value => { viewerDate = value; viewerPlayer = ''; renderViewer(); switchTab('schedule'); window.scrollTo({ top: 0, behavior: 'smooth' }); } });
+const personalView = mountPersonalView({ element: $('#personal-view'), players, getRecords: () => recordsFrom(state), getSessions: () => Object.fromEntries(Object.entries(state.sessions).filter(([, session]) => isOfficialMeeting(session))), isReady: () => hasSnapshot, openDate: value => { viewerDate = value; viewerPlayer = ''; renderViewer(); switchTab('schedule'); window.scrollTo({ top: 0, behavior: 'smooth' }); } });
 const archiveView = mountArchiveView({ element: $('#archive-records'), players, openPlayer: (id, dataset) => { personalView.selectArchive(id, dataset); switchTab('personal'); window.scrollTo({ top: 0, behavior: 'smooth' }); } });
 function toast(message) { $('#toast').textContent = message; $('#toast').hidden = false; clearTimeout(toast.timer); toast.timer = setTimeout(() => $('#toast').hidden = true, 5500); }
 function renderAttendees() {
@@ -80,6 +80,8 @@ function renderAttendees() {
   $('#guest-count').textContent = `${Object.keys(guests).length}명`;
   $('#add-guest').disabled = !members.length || Object.keys(guests).length >= GUEST_IDS.length;
   $('#guests').innerHTML = Object.entries(guests).map(([id, guest]) => `<div class="guest-entry"><label class="player-chip guest ${selected.has(id) ? 'checked' : ''}"><input type="checkbox" value="${id}" ${selected.has(id) ? 'checked' : ''}><span>${esc(guest.name)}</span><span class="checkmark">✓</span></label><button data-remove-guest="${id}" class="text-button" aria-label="${esc(guest.name)} 게스트 삭제">삭제</button></div>`).join('');
+  const memberCount = [...selected].filter(id => Object.hasOwn(names, id)).length;
+  $('#attendance-rule').textContent = `클럽원 ${memberCount}명 · 게스트 ${selected.size - memberCount}명 / 클럽원 4명 이상 모임만 공식 기록에 반영됩니다.`;
   renderPrep();
   renderTiming();
 }
@@ -119,7 +121,7 @@ function renderViewer() {
   if (!session.participantIds.includes(viewerPlayer)) viewerPlayer = '';
   const labels = sessionNames(session, names), entries = Object.entries(session.matchMap), completed = entries.filter(([id]) => resultFor(state, session, id)).length;
   const memberOptions = [...session.participantIds].sort((a, b) => labels[a].localeCompare(labels[b], 'ko'));
-  content.innerHTML = `<div class="viewer-meeting"><div><h3>${current.replaceAll('-', '.')} · ${session.startTime}–${session.endTime || ''}</h3><p>참석 ${session.participantIds.length}명 · ${entries.length}경기 · 점수 ${completed}/${entries.length}</p></div></div><div class="viewer-tools"><label><span>내 경기 찾기</span><select id="viewer-player"><option value="">전체 대진</option>${memberOptions.map(id => `<option value="${id}" ${viewerPlayer === id ? 'selected' : ''}>${esc(labels[id])}</option>`).join('')}</select></label><button id="viewer-image" class="secondary">이미지 저장·공유</button><button id="viewer-print" class="secondary">인쇄</button></div><p class="hint viewer-score-note">점수 입력 후 저장하면 순위와 기록에 반영됩니다.</p>${renderRounds({ session, state, names, editable: true, writable, dirty, focusPlayer: viewerPlayer, controlPrefix: 'viewer' })}`;
+  content.innerHTML = `<div class="viewer-meeting"><div><h3>${current.replaceAll('-', '.')} · ${session.startTime}–${session.endTime || ''}</h3><p>참석 ${session.participantIds.length}명 · ${entries.length}경기 · 점수 ${completed}/${entries.length}</p></div></div><div class="viewer-tools"><label><span>내 경기 찾기</span><select id="viewer-player"><option value="">전체 대진</option>${memberOptions.map(id => `<option value="${id}" ${viewerPlayer === id ? 'selected' : ''}>${esc(labels[id])}</option>`).join('')}</select></label><button id="viewer-image" class="secondary">이미지 저장·공유</button><button id="viewer-print" class="secondary">인쇄</button></div><p class="hint viewer-score-note">${isOfficialMeeting(session) ? '점수 입력 후 저장하면 순위와 기록에 반영됩니다.' : `공식 기록 미반영 · 클럽원 ${clubMemberCount(session)}명 참석. 클럽원 4명 이상인 모임만 순위·승률·참석률에 반영합니다. 대진과 점수는 보관됩니다.`}</p>${renderRounds({ session, state, names, editable: true, writable, dirty, focusPlayer: viewerPlayer, controlPrefix: 'viewer' })}`;
 }
 function renderSchedule() {
   const session = state.sessions[date] || draft;
@@ -136,6 +138,7 @@ function renderSchedule() {
   const maxGames = session.endTime ? meetingWindow(session.startTime, session.endTime) : Math.max(...Object.values(counts));
   const allocation = `<div class="allocation"><div class="panel-top"><h3>개인별 경기 수</h3><span>이번 모임</span></div><div class="allocation-grid">${session.participantIds.map(id => `<label><span>${esc(labels[id])}</span>${saved ? `<strong>${counts[id]}경기</strong>` : `<select data-quota="${id}" aria-label="${esc(labels[id])} 경기 수">${Array.from({ length: Math.max(0, maxGames - 1) }, (_, i) => i + 2).map(n => `<option value="${n}" ${counts[id] === n ? 'selected' : ''}>${n}경기</option>`).join('')}</select>`}</label>`).join('')}</div>${!saved ? '<p class="hint">개인 경기 수를 바꾸면 다시 배정됩니다. 총합은 4의 배수여야 합니다.</p><button id="apply-quotas" class="text-button">경기 수 조정 적용 →</button>' : ''}${session.lockedPairs?.length ? `<p class="hint">고정 페어 ${session.lockedPairs.length}조 적용${prepExceptions ? ` · 참석 인원상 ${prepExceptions}회는 다른 파트너로 출전` : ''}</p>` : ''}${session.partnerRepeats ? `<p class="hint">같은 파트너 ${session.partnerRepeats}회 반복. 참가 인원·경기 수에 따른 배정입니다.</p>` : '<p class="hint">같은 파트너 중복 없이 배정.</p>'}</div>`;
   content.innerHTML = `<div class="schedule-meta"><div><span class="label-tag">${saved ? '저장된 대진' : '대진 미리보기'}</span><strong>${entries.length}경기 · ${rounds.length}라운드</strong><span>${session.startTime}${session.endTime ? `–${session.endTime}` : ''}</span><span>${completed}/${entries.length} 점수 입력</span></div><div>${saved ? `<button class="secondary" id="view-saved">대진표 보기</button><button class="secondary" id="print">인쇄</button><button class="cancel-schedule" id="cancel-schedule" ${!writable ? 'disabled' : ''}>대진 취소</button>` : `<button class="secondary" id="manual-schedule">대진 직접 수정</button><button class="secondary" id="edit-schedule">참석·시간 수정</button><button class="secondary" id="regenerate">다시 배정</button><button class="primary" id="save-schedule" ${!writable ? 'disabled' : ''}>대진 확정·저장</button>`}</div></div>
+${!isOfficialMeeting(session) ? `<p class="hint">공식 기록 미반영 · 클럽원 ${clubMemberCount(session)}명 참석. 대진·점수는 저장되며 순위·승률·참석률·편성 이력에는 반영되지 않습니다.</p>` : ''}
 ${prepExceptions ? `<p class="prep-exception-note">고정 페어는 참석 인원상 ${prepExceptions}회 다른 파트너로 출전합니다.</p>` : ''}
 <div class="schedule-image-tools"><button id="export-image" class="secondary">이미지 저장·공유</button><p>사진으로 보관하거나 카카오톡으로 보내세요.</p></div>
 
@@ -183,8 +186,10 @@ function renderRanking() {
   }
   $('#export-csv').disabled = false;
   const baselines = baselineHistory(historySets, selectedPeriod()), hasAggregate = baselines.length > 0 || datedHistory(historySets, selectedPeriod(), recordsFrom(state)).length > 0;
-  $('#ranking-source-note').hidden = !baselines.length;
+  const excludedMeetings = Object.values(state.sessions).filter(session => !isOfficialMeeting(session) && withinPeriod(selectedPeriod(), session.date)).length;
+  $('#ranking-source-note').hidden = !baselines.length && !excludedMeetings;
   $('#ranking-source-note').textContent = baselines.length ? `마감 집계(${[...new Set(baselines.map(row => row.date))].join(' · ')})와 이후 경기를 합산합니다. 집계에 포함된 경기는 다시 더하지 않습니다.` : '';
+  if (excludedMeetings) $('#ranking-source-note').textContent += ` 클럽원 4명 미만 모임 ${excludedMeetings}회는 공식 기록에서 제외됩니다. 점수는 대진표에서 확인할 수 있습니다.`;
   const records = scopedRecords(), allRows = rankingWithHistory(recordsFrom(state), members, selectedPeriod(), historySets), rows = allRows.filter(player => matchesPlayer(player, search)), participating = allRows.filter(r => r.games).length;
   $('#ranking-title').textContent = `${periodLabel(selectedPeriod())} 순위`;
   $('#ranking-summary').innerHTML = [[hasAggregate ? '개인 경기 수' : '완료 경기', hasAggregate ? allRows.reduce((sum, row) => sum + row.games, 0) : records.length, '경기'], ['상세 기록 모임', new Set([...records.map(r => r.date), ...datedHistory(historySets, selectedPeriod(), recordsFrom(state)).map(row => row.date)]).size, '회'], ['경기한 멤버', participating, '명']].map(([label, n, unit]) => `<div><span>${label}</span><strong>${n}<small>${unit}</small></strong></div>`).join('');
@@ -215,7 +220,7 @@ function syncMeetingTimes() {
   $('#end').value = endTime;
   document.querySelectorAll('[data-meeting-time]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.meetingTime === `${startTime}/${endTime}`)));
 }
-function render() { renderViewer(); updateConnection(); syncMeetingTimes(); renderAttendees(); renderSchedule(); renderRanking(); renderPrep(); renderMembers(); personalView.render(); }
+function render() { historySets = historyForOfficialMeetings(sourceHistorySets, Object.values(state.sessions)); renderViewer(); updateConnection(); syncMeetingTimes(); renderAttendees(); renderSchedule(); renderRanking(); renderPrep(); renderMembers(); personalView.setHistory(historySets); }
 function switchTab(value) {
   const headingBottom = document.querySelector('header').getBoundingClientRect().bottom;
   const tabsTop = window.scrollY + headingBottom;
@@ -375,7 +380,7 @@ $('#app').addEventListener('submit', async event => {
   try {
     const scoreDate = form.dataset.date, scoreA = Number(form.scoreA.value), scoreB = Number(form.scoreB.value), key = `${scoreDate}_${form.dataset.match}`, revision = dirty.get(key)?.revision ?? resultFor(state, state.sessions[form.dataset.date], form.dataset.match)?.revision ?? 0;
     await store.saveResult(scoreDate, form.dataset.match, { scoreA, scoreB, outcome: outcome(scoreA, scoreB) }, revision, form.dataset.generation);
-    dirty.delete(key); render(); toast('점수 저장 완료. 순위에 반영했습니다.');
+    dirty.delete(key); render(); toast(isOfficialMeeting(state.sessions[scoreDate]) ? '점수 저장 완료. 순위에 반영했습니다.' : '점수를 보관했습니다. 클럽원 4명 미만 모임은 공식 기록에 반영하지 않습니다.');
   } catch (error) { toast(error.message); button.disabled = false; }
 });
 renderAttendees(); render();
@@ -383,7 +388,7 @@ try { store = await createStore(next => {
   if (generationOf(state.sessions[date]) !== generationOf(next.sessions[date]) || !!state.sessions[date] !== !!next.sessions[date]) { dirty.clear(); draft = null; }
   for (const [key, editing] of dirty) { const session = next.sessions[key.slice(0, 10)]; if (!session || editing.generation !== generationOf(session)) dirty.delete(key); }
   state = next; hasSnapshot = true; render();
-}, (text, canWrite) => { status = text; writable = canWrite; render(); }); await readHistory(sets => { historySets = sets; historyReady = true; personalView.setHistory(sets); archiveView.setHistory(sets); renderAttendees(); renderRanking(); }, text => { personalView.setHistoryStatus(text); archiveView.setHistoryStatus(text); }); }
+}, (text, canWrite) => { status = text; writable = canWrite; render(); }); await readHistory(sets => { sourceHistorySets = sets; historySets = historyForOfficialMeetings(sets, Object.values(state.sessions)); historyReady = true; personalView.setHistory(historySets); archiveView.setHistory(sets); renderAttendees(); renderRanking(); }, text => { personalView.setHistoryStatus(text); archiveView.setHistoryStatus(text); }); }
 catch (error) { status = error.message; writable = false; updateConnection(); }
 window.addEventListener('offline', () => { if (firebaseConfigured) { writable = false; status = '인터넷 연결 끊김 · 입력값은 유지됩니다'; updateConnection(); renderViewer(); renderSchedule(); } });
 window.addEventListener('online', () => { if (firebaseConfigured) { writable = store?.canWrite || false; status = '공유 기록 다시 연결 중'; updateConnection(); renderViewer(); renderSchedule(); } });

@@ -1,7 +1,7 @@
-import { quarter, validDate, validResult } from './model.js';
+import { quarter, validDate, validResult, isOfficialMeeting } from './model.js';
 import { GUEST_STRENGTH, validateGuests } from './guests.js';
 import { halfYear, halfYearBounds, quarterBounds, withinPeriod } from './periods.js';
-import { datedHistory } from './history-stats.js';
+import { datedHistory, historyForOfficialMeetings } from './history-stats.js';
 
 const clamp = value => Math.max(0, Math.min(1, value));
 
@@ -23,6 +23,7 @@ export function initialStrengths(ids, baseline = {}) {
 // Recent-quarter form nudges half-year form only after enough quarter evidence.
 export function strengthsForSession(records, ids, baseline, date, history = [], context = {}) {
   if (!validDate(date)) throw new Error('모임 날짜를 확인해 주세요.');
+  history = historyForOfficialMeetings(history, context.sessions || []);
   const priors = initialStrengths(ids, baseline), period = halfYear(date);
   const priorGames = baseline.priorGames ?? 24;
   if (!Number.isFinite(priorGames) || priorGames <= 0) throw new Error('대진 초기 설정을 확인해 주세요.');
@@ -30,7 +31,7 @@ export function strengthsForSession(records, ids, baseline, date, history = [], 
   const observations = empty(), recent = empty(), currentQuarter = quarter(date);
   const accepted = [];
   for (const record of records) {
-    if (!validDate(record.date) || record.date >= date || !withinPeriod(period, record.date) || !validResult(record)) continue;
+    if (!isOfficialMeeting(record) || !validDate(record.date) || record.date >= date || !withinPeriod(period, record.date) || !validResult(record)) continue;
     const { teamA, teamB } = record;
     if (!Array.isArray(teamA) || !Array.isArray(teamB) || teamA.length !== 2 || teamB.length !== 2) continue;
     const active = [...teamA, ...teamB];
@@ -84,7 +85,7 @@ function participationConfidence(actual, history, ids, date, period, observation
     for (const id of known) meetings.get(day).add(id);
   };
   for (const session of context.sessions || []) {
-    if (!Array.isArray(session.fixedPlayerIds) || !Object.keys(session.matchMap || {}).length) continue;
+    if (!isOfficialMeeting(session) || !Object.keys(session.matchMap || {}).length) continue;
     add(session.date, session.fixedPlayerIds);
   }
   for (const record of actual) add(record.date, [...record.teamA, ...record.teamB].filter(id => record.fixedPlayerIds.includes(id)));

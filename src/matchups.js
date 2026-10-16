@@ -1,4 +1,4 @@
-import { validDate, validResult } from './model.js';
+import { validDate, validResult, isOfficialMeeting } from './model.js';
 
 const fresh = () => ({ games: 0, wins: 0, draws: 0, losses: 0, scored: 0, conceded: 0, records: [] });
 const finish = row => ({ ...row, difference: row.scored - row.conceded, winRate: row.games ? Math.round(100 * row.wins / row.games) : null });
@@ -7,7 +7,7 @@ const finish = row => ({ ...row, difference: row.scored - row.conceded, winRate:
 export function personalMatchups(records, playerId, names = {}) {
   const partners = new Map(), opponents = new Map(), total = fresh(), seen = new Set();
   for (const record of records) {
-    if (!Array.isArray(record?.teamA) || !Array.isArray(record?.teamB)) continue;
+    if (!isOfficialMeeting(record) || !Array.isArray(record?.teamA) || !Array.isArray(record?.teamB)) continue;
     const ids = [...(record.teamA || []), ...(record.teamB || [])];
     if (!validDate(record.date) || !validResult(record) || record.teamA?.length !== 2 || record.teamB?.length !== 2 || new Set(ids).size !== 4 || !record.fixedPlayerIds?.includes(playerId) || !ids.includes(playerId)) continue;
     const matchKey = `${record.date}/${record.round}/${record.court}`;

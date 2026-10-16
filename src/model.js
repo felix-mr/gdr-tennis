@@ -21,8 +21,14 @@ export function meetingWindow(startTime, endTime) {
 export const validScore = value => Number.isInteger(value) && value >= 0 && value <= 99;
 export function validResult(result) { return result && validScore(result.scoreA) && validScore(result.scoreB) && result.outcome === outcome(result.scoreA, result.scoreB); }
 export function quarter(date) { return `${date.slice(0, 4)}-Q${Math.ceil(Number(date.slice(5, 7)) / 3)}`; }
-export function recordsFrom(state) {
-  return Object.values(state.sessions).flatMap(session => Object.entries(session.matchMap).flatMap(([id, match]) => {
+export function clubMemberCount(meeting) {
+  const members = meeting?.clubMemberIds ?? meeting?.fixedPlayerIds;
+  if (!Array.isArray(members)) return 0;
+  return new Set(members.filter(id => typeof id === 'string' && id.length && !Object.hasOwn(meeting.guests || {}, id) && !/^guest\d+$/.test(id) && (!Array.isArray(meeting.participantIds) || meeting.participantIds.includes(id)))).size;
+}
+export const isOfficialMeeting = meeting => clubMemberCount(meeting) >= 4;
+export function recordsFrom(state, { includeUnofficial = false } = {}) {
+  return Object.values(state.sessions).filter(session => includeUnofficial || isOfficialMeeting(session)).flatMap(session => Object.entries(session.matchMap).flatMap(([id, match]) => {
     const result = resultFor(state, session, id);
     return validResult(result) ? [{ ...match, ...result, date: session.date, fixedPlayerIds: session.fixedPlayerIds, guests: session.guests || {} }] : [];
   }));
@@ -30,7 +36,7 @@ export function recordsFrom(state) {
 export function ranking(records, players) {
   const rows = new Map(players.map(p => [p.id, { ...p, games: 0, wins: 0, draws: 0, losses: 0, points: 0, scored: 0, conceded: 0 }]));
   for (const r of records) {
-    if (!validResult(r)) continue;
+    if (!validResult(r) || !isOfficialMeeting(r)) continue;
     for (const side of ['teamA', 'teamB']) for (const id of r[side]) {
       const row = rows.get(id);
       if (!row || !r.fixedPlayerIds.includes(id)) continue;
