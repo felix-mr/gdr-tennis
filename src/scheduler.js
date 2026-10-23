@@ -38,7 +38,7 @@ export function generateSchedule(ids, quotas, { random = Math.random, attempts =
   for (let a = 0; a < orderedIds.length; a++) for (let b = a + 1; b < orderedIds.length; b++) drawPartnerCosts[pairKey(orderedIds[a], orderedIds[b])] = 80 * (random() - 0.5);
   let best = null;
   for (let attempt = 0; attempt < attempts; attempt++) {
-    const remaining = { ...quotas }, partners = {}, opponents = {}, groupPartners = {}, firstActive = {}, lastActive = {}, restStreak = {}, matchMap = {};
+    const remaining = { ...quotas }, partners = {}, opponents = {}, fixedOpponents = {}, groupPartners = {}, firstActive = {}, lastActive = {}, restStreak = {}, matchMap = {};
     let remainingSlots = slots, cost = 0, excessGap = 0, severeGap = 0, failed = false;
     for (let round = 1; round <= rounds; round++) {
       const future = rounds - round;
@@ -82,13 +82,17 @@ export function generateSchedule(ids, quotas, { random = Math.random, attempts =
         }
         if (rotationOpponents && (opponents[rotationKey] || 0) >= opponentLimit) penalty += 250;
         for (let i = 0; i < shuffled.length; i += 4) {
-          const strengthA = strength(shuffled[i]) + strength(shuffled[i + 1]);
-          const strengthB = strength(shuffled[i + 2]) + strength(shuffled[i + 3]);
+          const teamA = trialTeams[i / 2], teamB = trialTeams[i / 2 + 1];
+          const strengthA = strength(teamA[0]) + strength(teamA[1]);
+          const strengthB = strength(teamB[0]) + strength(teamB[1]);
           penalty += matchSpreadCost(shuffled.slice(i, i + 4), strength);
           gapCost += (Math.max(0, Math.abs(strengthA - strengthB) - TEAM_GAP_ALLOWANCE) / STRENGTH_STEP) ** 2;
           severeCost += Math.max(0, Math.abs(strengthA - strengthB) / STRENGTH_STEP - 4) ** 2;
-          for (const team of [shuffled.slice(i, i + 2), shuffled.slice(i + 2, i + 4)]) { const key = pairKey(...team); if (!fixedKeys.has(key)) penalty += (partners[key] || 0) * 100 + 16 * (history.partners[key] || 0) + drawPartnerCosts[key]; for (const id of team) if (preferred[id] && !team.includes(preferred[id])) penalty += 250; }
-          for (const a of shuffled.slice(i, i + 2)) for (const b of shuffled.slice(i + 2, i + 4)) { const key = pairKey(a, b); penalty += (opponents[key] || 0) * 4 + 6 * (history.opponents[key] || 0); }
+          for (const team of [teamA, teamB]) { const key = pairKey(...team); if (!fixedKeys.has(key)) penalty += (partners[key] || 0) * 100 + 16 * (history.partners[key] || 0) + drawPartnerCosts[key]; for (const id of team) if (preferred[id] && !team.includes(preferred[id])) penalty += 250; }
+          for (const a of teamA) for (const b of teamB) { const key = pairKey(a, b); penalty += (opponents[key] || 0) * 4 + 6 * (history.opponents[key] || 0); }
+          if (fixedKeys.size) for (const [team, other] of [[teamA, teamB], [teamB, teamA]]) if (fixedKeys.has(pairKey(...team))) {
+            for (const id of other) penalty += 200 * (fixedOpponents[`${pairKey(...team)}>${id}`] || 0);
+          }
         }
         penalty += 600 * gapCost;
         if (!pairing || severeCost < pairing.severeCost - 1e-9 || (Math.abs(severeCost - pairing.severeCost) <= 1e-9 && penalty < pairing.penalty)) pairing = { shuffled, penalty, gapCost, severeCost };
@@ -105,6 +109,9 @@ export function generateSchedule(ids, quotas, { random = Math.random, attempts =
           if (!fixedKeys.has(key) && team.some(id => rotating.has(id))) for (const id of team) if (!rotating.has(id)) groupPartners[id] = (groupPartners[id] || 0) + 1;
         }
         for (const a of teamA) for (const b of teamB) { const key = pairKey(a, b); opponents[key] = (opponents[key] || 0) + 1; }
+        for (const [team, other] of [[teamA, teamB], [teamB, teamA]]) if (fixedKeys.has(pairKey(...team))) for (const id of other) {
+          const key = `${pairKey(...team)}>${id}`; fixedOpponents[key] = (fixedOpponents[key] || 0) + 1;
+        }
       }
       for (const id of ids) {
         if (active.includes(id)) { remaining[id]--; restStreak[id] = 0; firstActive[id] ??= round; lastActive[id] = round; }
@@ -129,10 +136,14 @@ export function generateSchedule(ids, quotas, { random = Math.random, attempts =
       // repeated partners over another similar-level game. Keep large matchup
       // gaps and rest spacing ahead of that preference.
       const qualityGap = Object.values(matchMap).reduce((sum, match) => sum + Math.max(0, Math.abs(match.teamA.reduce((s, id) => s + strength(id), 0) - match.teamB.reduce((s, id) => s + strength(id), 0)) / STRENGTH_STEP - 2.25) ** 2, 0);
-      const priorities = [consecutiveRests, severeGap, qualityGap, partnerRepeats, cost];
-      const previous = best && [best.consecutiveRests, best.severeGap, best.qualityGap, best.partnerRepeats, best.cost];
+      // Count a fixed team's individual opponents, regardless of who partners
+      // them. Repetition stays feasible for small rosters and many fixed teams.
+      const maxFixedOpponentMeetings = Math.max(0, ...Object.values(fixedOpponents));
+      const fixedOpponentCost = Object.values(fixedOpponents).reduce((sum, count) => sum + count * (count - 1) / 2, 0);
+      const priorities = [consecutiveRests, severeGap, qualityGap, partnerRepeats, maxFixedOpponentMeetings, fixedOpponentCost, cost];
+      const previous = best && [best.consecutiveRests, best.severeGap, best.qualityGap, best.partnerRepeats, best.maxFixedOpponentMeetings, best.fixedOpponentCost, best.cost];
       const different = previous && priorities.findIndex((value, index) => Math.abs(value - previous[index]) > 1e-9);
-      if (!best || (different !== -1 && priorities[different] < previous[different])) best = { matchMap, cost, excessGap, severeGap, qualityGap, consecutiveRests, partnerRepeats };
+      if (!best || (different !== -1 && priorities[different] < previous[different])) best = { matchMap, cost, excessGap, severeGap, qualityGap, consecutiveRests, partnerRepeats, maxFixedOpponentMeetings, fixedOpponentCost };
     }
   }
   if (!best && lockedPairs.length) return generateSchedule(ids, quotas, { random, attempts, strengths, preferredPairs: lockedPairs, timingPreferences, previousSchedules, meetingDate });
