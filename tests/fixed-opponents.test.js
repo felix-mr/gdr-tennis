@@ -76,15 +76,19 @@ function fixedFeasible(ids, quotas, pairs, rounds) {
   return search(units, rounds);
 }
 
-test('edge rosters preserve every quota; fixed-pair relaxation happens only when exact pair scheduling is impossible', () => {
-  for (const count of [4, 5, 6, 7, 8, 9, 10, 12, 13, 14, 16, 17, 18, 20, 22, 24, 32]) for (const rounds of [4, 6, ...(count === 32 ? [8] : [])]) for (const allFixed of [false, true]) {
+test('edge rosters preserve every quota and fixed pair, or reject an impossible combination', () => {
+  for (const count of [4, 5, 6, 7, 8, 9, 10, 12, 13, 14, 16, 17, 18, 20, 22, 24, 32]) for (const rounds of [4, 6, ...(count === 32 ? [8] : [])]) for (const pairCount of new Set([0, 1, Math.floor(count / 4), Math.floor(count / 2) - 1, Math.floor(count / 2)])) {
     const ids = Array.from({ length: count }, (_, i) => `p${i}`);
-    const lockedPairs = allFixed ? Array.from({ length: Math.floor(count / 2) }, (_, i) => ids.slice(i * 2, i * 2 + 2)) : [ids.slice(0, 2)];
+    const lockedPairs = Array.from({ length: pairCount }, (_, i) => ids.slice(i * 2, i * 2 + 2));
     if (rounds * (count >= 8 ? 8 : 4) < count * 2) { assert.throws(() => allocateForWindow(ids, rounds, lockedPairs), /최소 2경기/); continue; }
-    const quotas = allocate(ids, rounds, lockedPairs, count * 101 + rounds + Number(allFixed));
+    const quotas = allocate(ids, rounds, lockedPairs, count * 101 + rounds + pairCount);
     const possible = fixedFeasible(ids, quotas, lockedPairs, rounds);
+    if (!possible) {
+      assert.throws(() => generateSchedule(ids, quotas, { lockedPairs, random: seeded(73), attempts: 60 }), /고정 페어.*유지/);
+      continue;
+    }
     const result = generateSchedule(ids, quotas, { lockedPairs, random: seeded(73), attempts: 60 });
-    verify(result, ids, quotas, possible ? lockedPairs : []);
+    verify(result, ids, quotas, lockedPairs);
     assert.equal(Math.max(...Object.values(result.matchMap).map(match => match.round)), rounds);
   }
 });
@@ -127,4 +131,10 @@ test('unavoidable opponent repetition with only four people does not split fixed
     verify(result, ids, quotas, lockedPairs);
     assert.deepEqual(exposure(result.matchMap, ['a', 'b']), { c: 6, d: 6 });
   }
+});
+
+test('an impossible fixed-pair roster is rejected rather than silently changing partners', () => {
+  const ids = ['a', 'b', 'c', 'd', 'e'];
+  const quotas = { a: 3, b: 3, c: 3, d: 3, e: 4 };
+  assert.throws(() => generateSchedule(ids, quotas, { lockedPairs: [['a', 'b'], ['c', 'd']], random: seeded(73) }), /고정 페어.*유지/);
 });

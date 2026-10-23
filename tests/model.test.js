@@ -111,12 +111,10 @@ test('preparation pair stays together and receives same number of games', () => 
     assert.ok(matches.every(m => [m.teamA, m.teamB].some(team => team.includes(a) && team.includes(b))));
   }
 });
-test('odd group with two prep pairs still gives every member their games', () => {
+test('five attendees with two fixed pairs cannot include the unpaired attendee without splitting a pair', () => {
   const ids = players.slice(0, 5).map(p => p.id), lockedPairs = [[ids[0], ids[1]], [ids[2], ids[3]]];
   const quotas = allocateForWindow(ids, 4, lockedPairs);
-  const result = generateSchedule(ids, quotas, { random, lockedPairs, attempts: 80 });
-  validateSession({ date: '2026-10-11', participantIds: ids, fixedPlayerIds: ids, lockedPairs, matchMap: result.matchMap, startTime: '19:00', roundMinutes: 30 }, ids);
-  for (const id of ids) assert.equal(Object.values(result.matchMap).filter(m => [...m.teamA, ...m.teamB].includes(id)).length, quotas[id]);
+  assert.throws(() => generateSchedule(ids, quotas, { random, lockedPairs, attempts: 80 }), /고정 페어.*유지/);
 });
 test('prep pairs cannot overlap or use an absent member', () => {
   const ids = ['a', 'b', 'c', 'd'];
@@ -146,12 +144,11 @@ test('short sessions require two games each and daily counts differ by at most o
   }
 });
 
-test('daily counts stay within one game with preparation pairs and an odd number of attendees', () => {
+test('fair quota allocation alone does not permit splitting fixed pairs in an odd roster', () => {
   const ids = players.slice(0, 5).map(p => p.id), pairs = [[ids[0], ids[1]], [ids[2], ids[3]]];
   const quotas = allocateForWindow(ids, 6, pairs);
   assert.deepEqual(quotas, { [ids[0]]: 5, [ids[1]]: 5, [ids[2]]: 5, [ids[3]]: 5, [ids[4]]: 4 });
-  const result = generateSchedule(ids, quotas, { random, attempts: 60, lockedPairs: pairs });
-  validateSession({ date: '2026-10-11', participantIds: ids, fixedPlayerIds: ids, matchMap: result.matchMap, startTime: '19:00', endTime: '22:00', roundMinutes: 30, lockedPairs: pairs }, ids);
+  assert.throws(() => generateSchedule(ids, quotas, { random, attempts: 60, lockedPairs: pairs }), /고정 페어.*유지/);
 });
 
 test('invalid, reversed and overnight meeting times are rejected', () => {

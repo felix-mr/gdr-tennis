@@ -146,7 +146,7 @@ export function generateSchedule(ids, quotas, { random = Math.random, attempts =
       if (!best || (different !== -1 && priorities[different] < previous[different])) best = { matchMap, cost, excessGap, severeGap, qualityGap, consecutiveRests, partnerRepeats, maxFixedOpponentMeetings, fixedOpponentCost };
     }
   }
-  if (!best && lockedPairs.length) return generateSchedule(ids, quotas, { random, attempts, strengths, preferredPairs: lockedPairs, timingPreferences, previousSchedules, meetingDate });
+  if (!best && lockedPairs.length) throw new Error('고정 페어를 모두 유지하며 배정하지 못했습니다. 참석자·개인 경기 수를 조정하거나 일부 페어를 해제해 주세요.');
   if (!best) throw new Error('이 경기 수 조합으로 배정하지 못했습니다. 개인 경기 수를 고르게 조정해 주세요.');
   const gaps = Object.values(best.matchMap).map(match => Math.abs(match.teamA.reduce((sum, id) => sum + strength(id), 0) - match.teamB.reduce((sum, id) => sum + strength(id), 0)));
   best.balance = { averageGap: gaps.reduce((a, b) => a + b, 0) / gaps.length, maxGap: Math.max(...gaps) };
