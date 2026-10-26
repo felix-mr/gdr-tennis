@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { swapAssignments, manualScheduleNotes } from '../src/schedule-edit.js';
+import { swapAssignments, manualScheduleNotes, validateManualSchedule } from '../src/schedule-edit.js';
 import { validateSession } from '../src/model.js';
 
 const members = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
@@ -22,15 +22,23 @@ test('individual slot swap preserves total games and metadata without mutating s
   validateSession(changed, members);
 });
 
-test('cross-round collision is rejected and leaves source intact', () => {
+test('cross-round collisions remain editable and are checked only when applying the complete edit', () => {
   const original = full(), copy = structuredClone(original);
-  assert.throws(() => swapAssignments(original, player('r1-c1', 'teamA', 0, 'a'), player('r2-c2', 'teamA', 0, 'e')), /중복 출전/);
+  const interim = swapAssignments(original, player('r1-c1', 'teamA', 0, 'a'), player('r2-c2', 'teamA', 0, 'e'));
+  assert.deepEqual(interim.matchMap['r1-c1'].teamA, ['e', 'b']);
+  assert.throws(() => validateManualSchedule(interim, { a: '첫선수', e: '다른선수' }), /1라운드 중복 출전: 다른선수[\s\S]*2라운드 중복 출전: 첫선수/);
+  const completed = swapAssignments(interim, player('r1-c2', 'teamA', 0, 'e'), player('r2-c1', 'teamA', 0, 'a'));
+  assert.equal(validateManualSchedule(completed), completed);
   assert.deepEqual(original, copy);
 });
 
-test('fixed pair members move together as a team and cannot be split by individual swap', () => {
+test('fixed pairs may be temporarily split and must be restored when applying', () => {
   const original = { ...full(), lockedPairs: [['a', 'b']] };
-  assert.throws(() => swapAssignments(original, player('r1-c1', 'teamA', 0, 'a'), player('r1-c2', 'teamA', 0, 'e')), /고정 페어/);
+  const interim = swapAssignments(original, player('r1-c1', 'teamA', 0, 'a'), player('r1-c2', 'teamA', 0, 'e'));
+  assert.throws(() => validateManualSchedule(interim), /고정 페어/);
+  const completed = swapAssignments(interim, player('r1-c1', 'teamA', 1, 'b'), player('r1-c2', 'teamA', 1, 'f'));
+  validateManualSchedule(completed);
+  assert.deepEqual(completed.matchMap['r1-c2'].teamA, ['a', 'b']);
   const changed = swapAssignments(original, team('r1-c1', 'teamA', ['a', 'b']), team('r1-c2', 'teamA', ['e', 'f']));
   assert.deepEqual(changed.matchMap['r1-c2'].teamA, ['a', 'b']);
   assert.deepEqual(changed.lockedPairs, original.lockedPairs);
@@ -44,8 +52,21 @@ test('same-round rest substitution recalculates counts and warns about uneven ga
   const notes = manualScheduleNotes(changed);
   assert.equal(notes.games.a, 2); assert.equal(notes.games.c, 4);
   assert.ok(notes.notes.some(note => note.includes('경기 수 차이')));
-  assert.throws(() => swapAssignments(original, player('r4-c1', 'teamA', 1, 'b'), { kind: 'rest', round: 4, playerId: 'c' }), /최소 2경기/);
+  const interim = swapAssignments(original, player('r4-c1', 'teamA', 1, 'b'), { kind: 'rest', round: 4, playerId: 'c' });
+  assert.equal(manualScheduleNotes(interim).games.b, 1);
+  assert.throws(() => validateManualSchedule(interim), /최소 2경기/);
+  const completed = swapAssignments(interim, player('r3-c1', 'teamA', 0, 'c'), { kind: 'rest', round: 3, playerId: 'b' });
+  validateManualSchedule(completed);
   assert.throws(() => swapAssignments(original, player('r4-c1', 'teamA', 0, 'a'), { kind: 'rest', round: 1, playerId: 'e' }), /같은 라운드/);
+});
+
+test('duplicate slots within one match can be repaired before applying', () => {
+  const original = full();
+  const interim = swapAssignments(original, player('r1-c1', 'teamA', 0, 'a'), player('r2-c1', 'teamA', 1, 'b'));
+  assert.deepEqual(interim.matchMap['r1-c1'].teamA, ['b', 'b']);
+  assert.throws(() => validateManualSchedule(interim), /1라운드 중복 출전: b/);
+  const completed = swapAssignments(interim, player('r1-c1', 'teamA', 1, 'b'), player('r2-c1', 'teamA', 0, 'a'));
+  validateManualSchedule(completed);
 });
 
 test('teams sharing one member can swap across rounds if no player is double-booked', () => {

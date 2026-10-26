@@ -1,4 +1,4 @@
-import { swapAssignments, manualScheduleNotes } from './schedule-edit.js';
+import { swapAssignments, manualScheduleNotes, validateManualSchedule } from './schedule-edit.js';
 import { sessionNames } from './guests.js';
 
 const esc = value => String(value).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -26,14 +26,14 @@ export function openScheduleEditor(original, names, onApply) {
       const rest = current.participantIds.filter(id => !active.includes(id));
       const [hour, minute] = current.startTime.split(':').map(Number), time = hour * 60 + minute + (round - 1) * current.roundMinutes;
       return `<section class="assignment-round"><h3>ROUND ${String(round).padStart(2, '0')} <span>${String(Math.floor(time / 60) % 24).padStart(2, '0')}:${String(time % 60).padStart(2, '0')}</span></h3><div class="assignment-matches">${matches.map(([matchId, match]) => `<article class="assignment-match"><h4>${match.court === 1 ? '안쪽' : '바깥쪽'} 코트</h4><div class="assignment-teams">${['teamA', 'teamB'].map((side, index) => `${index ? '<span class="assignment-vs">VS</span>' : ''}<div>${mode === 'team' ? button({ kind: 'team', matchId, side, playerIds: [...match[side]] }, match[side].map(id => labels[id]).join(' · ')) : match[side].map((playerId, index) => button({ kind: 'player', matchId, side, index, playerId }, labels[playerId])).join('')}${(current.lockedPairs || []).some(pair => pair.every(id => match[side].includes(id))) ? '<small>고정 페어</small>' : ''}</div>`).join('')}</div></article>`).join('')}</div>${rest.length ? `<div class="assignment-rest"><span>휴식</span><div>${rest.map(playerId => mode === 'player' ? button({ kind: 'rest', round, playerId }, labels[playerId]) : `<span>${esc(labels[playerId])}</span>`).join('')}</div></div>` : ''}</section>`;
-    }).join('')}<div class="assignment-counts"><h3>수정 후 경기 수</h3><div>${Object.entries(games).map(([id, n]) => `<span>${esc(labels[id])} <strong>${n}경기</strong></span>`).join('')}</div>${notes.length ? `<ul>${notes.map(note => `<li>${esc(note)}</li>`).join('')}</ul>` : ''}</div></div><div class="assignment-footer"><p>적용 후 미리보기에서 확인하세요.<br>대진 확정·저장 전에는 공유되지 않습니다.</p><button type="button" id="assignment-apply" class="primary">수정 적용</button></div>`;
+    }).join('')}<div class="assignment-counts"><h3>수정 후 경기 수</h3><div>${Object.entries(games).map(([id, n]) => `<span>${esc(labels[id])} <strong>${n}경기</strong></span>`).join('')}</div>${notes.length ? `<ul>${notes.map(note => `<li>${esc(note)}</li>`).join('')}</ul>` : ''}</div></div><div class="assignment-footer"><p>중복 출전·경기 수·고정 페어는 수정 적용 시 확인합니다.<br>대진 확정·저장 전에는 공유되지 않습니다.</p><button type="button" id="assignment-apply" class="primary">수정 적용</button></div>`;
     dialog.querySelector('.assignment-rounds').scrollTop = scroll;
   }
   dialog.addEventListener('click', event => {
     const target = event.target.closest('button'); if (!target) return;
     if (target.id === 'assignment-close') { dialog.close(); return; }
     if (target.id === 'assignment-apply') {
-      try { onApply(structuredClone(current)); dialog.close(); }
+      try { validateManualSchedule(current, labels); onApply(structuredClone(current)); dialog.close(); }
       catch (failure) { message = failure.message; error = true; render(); }
       return;
     }

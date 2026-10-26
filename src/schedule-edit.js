@@ -1,4 +1,5 @@
 import { validateSession } from './model.js';
+import { sessionNames } from './guests.js';
 
 function resolve(session, slot) {
   if (slot?.kind === 'rest') {
@@ -30,11 +31,8 @@ export function swapAssignments(session, first, second) {
     else match[item.slot.side][item.slot.index] = replacement[0];
   };
   put(a, b.ids); put(b, a.ids);
-  // Validate on a copy: rejected edits leave the original preview untouched.
-  if (Object.values(counts(next)).some(value => value < 2)) throw new Error('모든 참석자는 최소 2경기를 해야 합니다. 다른 라운드에서 먼저 출전을 추가해 주세요.');
-  try { validateSession(next, next.fixedPlayerIds); }
-  catch { throw new Error('같은 라운드에 중복 출전하게 됩니다. 다른 자리를 선택해 주세요.'); }
-  for (const pair of next.lockedPairs || []) if (pairBreaks(next, pair) > pairBreaks(session, pair)) throw new Error('고정 페어가 나뉘게 됩니다. 팀 이동으로 두 명을 함께 바꿔 주세요.');
+  // Intermediate edits may be invalid while several slots are being moved.
+  // Validate the complete working copy only when the editor applies it.
   const paired = new Map(), fixed = new Set((next.lockedPairs || []).map(pair => [...pair].sort().join('|')));
   for (const match of Object.values(next.matchMap)) for (const team of [match.teamA, match.teamB]) {
     const key = [...team].sort().join('|');
@@ -42,6 +40,27 @@ export function swapAssignments(session, first, second) {
   }
   next.partnerRepeats = [...paired.values()].reduce((sum, n) => sum + Math.max(0, n - 1), 0);
   return next;
+}
+
+export function validateManualSchedule(session, names = {}) {
+  const labels = sessionNames(session, names), label = id => labels[id] || id;
+  const issues = [], active = new Map();
+  for (const match of Object.values(session.matchMap)) {
+    if (!active.has(match.round)) active.set(match.round, new Map());
+    const players = active.get(match.round);
+    for (const id of [...match.teamA, ...match.teamB]) players.set(id, (players.get(id) || 0) + 1);
+  }
+  for (const [round, players] of [...active].sort(([a], [b]) => a - b)) {
+    const repeated = [...players].filter(([, n]) => n > 1).map(([id]) => label(id));
+    if (repeated.length) issues.push(`${round}라운드 중복 출전: ${repeated.join(' · ')}`);
+  }
+  const short = Object.entries(counts(session)).filter(([, n]) => n < 2).map(([id]) => label(id));
+  if (short.length) issues.push(`최소 2경기가 필요합니다: ${short.join(' · ')}`);
+  const split = (session.lockedPairs || []).filter(pair => pairBreaks(session, pair));
+  if (split.length) issues.push(`고정 페어를 함께 배치해 주세요: ${split.map(pair => pair.map(label).join(' · ')).join(' / ')}`);
+  if (issues.length) throw new Error(issues.join('\n'));
+  validateSession(session, session.fixedPlayerIds);
+  return session;
 }
 
 export function manualScheduleNotes(session) {
