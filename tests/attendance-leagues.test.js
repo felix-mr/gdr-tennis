@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { attendanceLeaguesForSession, PERSONAL_SEED_WEIGHT, PERFORMANCE_SEED_WEIGHT } from '../src/attendance-leagues.js';
+import { attendanceLeaguesForSession, PERSONAL_SEED_WEIGHT, HALF_YEAR_SEED_WEIGHT } from '../src/attendance-leagues.js';
 import { initialStrengths } from '../src/ratings.js';
 import { allocateForWindow, generateSchedule } from '../src/scheduler.js';
 import { mixingCounts } from '../src/mixing-policy.js';
@@ -16,7 +16,7 @@ const snapshot=rows=>({id:'h2-rates',kind:'individual-aggregate',aggregationRole
 test('personal weights and confidence-adjusted performance contribute equally with no results staying neutral',()=>{
  const result=attendanceLeaguesForSession([],players,baseline,date,{participantIds:members});
  const priors=initialStrengths(players.map(p=>p.id),baseline);
- assert.equal(PERSONAL_SEED_WEIGHT,0.5);assert.equal(PERFORMANCE_SEED_WEIGHT,0.5);
+ assert.equal(PERSONAL_SEED_WEIGHT,0.5);assert.equal(HALF_YEAR_SEED_WEIGHT,0.5);
  for(const id of members)assert.equal(result.seedScores[id],0.5*priors[id]+0.5*0.5);
  assert(result.cut>=4&&members.length-result.cut>=4);
 });
@@ -41,7 +41,7 @@ test('missing stronger members can move a former lower member into the daily upp
  assert.deepEqual(today.leagues,reversed.leagues);
 });
 
-test('quarterly win rate orders equal personal weights and sparse results have less influence',()=>{
+test('half-year win rate orders equal personal weights and sparse results have less influence',()=>{
  const one=attendanceLeaguesForSession([game()],neutral,{},date);
  const many=attendanceLeaguesForSession(Array(24).fill(game()),neutral,{},date);
  assert(one.seedScores.p0>0.5&&one.seedScores.p0-0.5<0.002);
@@ -99,33 +99,15 @@ test('attendance changes confidence in wins and losses while no results remain n
  assert(Object.values(none.seedScores).every(n=>n===0.5));
 });
 
-test('Q3 wins and losses cannot affect Q4 performance with the same current-quarter results',()=>{
+test('Q3 wins still affect H2 performance when the current-quarter sample is identical',()=>{
  const current=[...Array(6).fill(game()),...Array(6).fill(game('2026-10-11','teamB'))];
  const better=attendanceLeaguesForSession([...Array(24).fill(game('2026-09-27')), ...current],neutral,{},date);
  const worse=attendanceLeaguesForSession([...Array(24).fill(game('2026-09-27','teamB')), ...current],neutral,{},date);
- assert.equal(better.period,'2026-Q4');assert.equal(better.seedScores.p0,0.5);
- assert.deepEqual(better,worse);
+ assert(better.seedScores.p0>0.5);assert(worse.seedScores.p0<0.5);
+ assert(Math.abs(better.seedScores.p0+worse.seedScores.p0-1)<1e-12);
 });
 
-test('previous-quarter promotions and demotions cannot leak into current-quarter form',()=>{
- const ratings=Object.fromEntries(neutral.map(p=>[p.id,0.5]));ratings.p0=0.42;ratings.p6=0.58;
- const previous=['2026-09-06','2026-09-13','2026-09-20'].flatMap(day=>Array(4).fill(game(day)));
- const current=Array(24).fill(game('2026-10-11','draw'));
- const expected=attendanceLeaguesForSession(current,neutral,{ratings},date);
- const combined=attendanceLeaguesForSession([...previous,...current],neutral,{ratings},date);
- assert.deepEqual(combined,expected);
- assert.equal(combined.changes.length,0);
-});
-
-test('previous-quarter daily and cumulative imports cannot change a quarterly seed',()=>{
- const current=Array(12).fill(game());
- const q3={...snapshot([['p0',100,0],['p1',0,100]]),period:'2026-Q3',periodStart:'2026-07-01',cutoff:'2026-09-27'};
- const daily={...q3,id:'q3-daily',kind:'daily-individual-aggregate'};
- const expected=attendanceLeaguesForSession(current,neutral,{},date);
- assert.deepEqual(attendanceLeaguesForSession(current,neutral,{},date,{history:[q3,daily]}),expected);
-});
-
-test('previous-quarter game volume cannot increase trust in an unchanged quarterly win rate',()=>{
+test('previous-quarter game volume cannot increase trust in an unchanged H2 win rate',()=>{
  const current=Array(4).fill(game());
  const few=attendanceLeaguesForSession([...Array(4).fill(game('2026-09-27')),...current],neutral,{},date);
  const many=attendanceLeaguesForSession([...Array(200).fill(game('2026-09-27')),...current],neutral,{},date);
@@ -144,19 +126,16 @@ test('previous-quarter missed meetings cannot lower current-quarter attendance c
  assert.deepEqual(normal.seedScores,oldAbsences.seedScores);
 });
 
-test('a cross-quarter H2 total cannot affect quarterly win rates or game counts',()=>{
+test('a cross-quarter H2 total supplies win rates but cannot fabricate current-quarter games',()=>{
  const base=attendanceLeaguesForSession([],neutral,{},date);
  const old={...snapshot([['p0',100,0],['p1',0,100]]),period:'2026-H2',periodStart:'2026-07-01'};
  const unknownQuarter=attendanceLeaguesForSession([],neutral,{},date,{history:[old]});
  assert.deepEqual(unknownQuarter.seedScores,base.seedScores);
  const withKnownQuarter=attendanceLeaguesForSession([game()],neutral,{},date,{history:[old]});
- const withoutOld=attendanceLeaguesForSession([game()],neutral,{},date);
- assert.deepEqual(withKnownQuarter,withoutOld);
  assert(withKnownQuarter.seedScores.p0>0.5);
  assert(withKnownQuarter.seedScores.p0-0.5<0.001);
  const dated={id:'daily',kind:'daily-individual-aggregate',datePrecision:'day',cutoff:'2026-10-11',rows:snapshot([['p0',24,0]]).rows};
  const daily=attendanceLeaguesForSession([],neutral,{},date,{history:[old,dated]});
- assert.deepEqual(daily,attendanceLeaguesForSession([],neutral,{},date,{history:[dated]}));
  assert(daily.seedScores.p0>withKnownQuarter.seedScores.p0);
 });
 
@@ -171,16 +150,16 @@ test('confidence resets at the scheduled quarter boundary, including when old fo
  assert(first.seedScores.p0>0.5);
 });
 
-test('only verified pre-meeting current-quarter evidence can influence the seed',()=>{
+test('only verified pre-meeting H2 evidence can influence the seed',()=>{
  const empty=attendanceLeaguesForSession([],neutral,{},date);
  const bad=[game('2026-06-28'),game(date),game('2026-11-08'),{...game(),scoreA:-1},{...game(),fixedPlayerIds:['p0','p1','p6']}];
  assert.deepEqual(attendanceLeaguesForSession(bad,neutral,{},date),empty);
- const snapshot={id:'q4',kind:'individual-aggregate',aggregationRole:'period-baseline',contributesToLiveRanking:true,datePrecision:'day',period:'2026-Q4',periodStart:'2026-10-01',cutoff:'2026-10-18',rows:[{playerId:'p0',stats:{wins:100,draws:0,losses:0,scored:600,conceded:200}},{playerId:'p1',stats:{wins:50,draws:0,losses:50,scored:500,conceded:400}}]};
+ const snapshot={id:'h2',kind:'individual-aggregate',aggregationRole:'period-baseline',contributesToLiveRanking:true,datePrecision:'day',period:'2026-H2',periodStart:'2026-07-01',cutoff:'2026-10-18',rows:[{playerId:'p0',stats:{wins:100,draws:0,losses:0,scored:600,conceded:200}},{playerId:'p1',stats:{wins:50,draws:0,losses:50,scored:500,conceded:400}}]};
  const good=attendanceLeaguesForSession([game()],neutral,{},date,{history:[snapshot]});assert(good.seedScores.p0>good.seedScores.p1);
  for(const history of [[{...snapshot,cutoff:date}],[{...snapshot,cutoff:'2026-06-28',periodStart:'2026-01-01'}],[{...snapshot,contributesToRatings:false}],[{...snapshot,rows:snapshot.rows.map(row=>({...row,issues:['identity-review']}))}]])assert.deepEqual(attendanceLeaguesForSession([],neutral,{},date,{history}),empty);
 });
 
-test('covered actual matches do not count twice in quarterly statistics',()=>{
+test('covered actual matches do not count twice in the half-year rank',()=>{
  const snapshot={id:'h2',kind:'individual-aggregate',aggregationRole:'period-baseline',contributesToLiveRanking:true,datePrecision:'day',period:'2026-Q4',periodStart:'2026-10-01',cutoff:'2026-10-18',rows:['p0','p1','p6','p7'].map(id=>({playerId:id,stats:{wins:['p0','p1'].includes(id)?24:0,draws:0,losses:['p0','p1'].includes(id)?0:24,scored:100,conceded:80}}))};
  const before=attendanceLeaguesForSession([],neutral,{},date,{history:[snapshot]});
  const after=attendanceLeaguesForSession(Array(12).fill(game()),neutral,{},date,{history:[snapshot]});

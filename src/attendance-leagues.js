@@ -1,35 +1,38 @@
 import { initialStrengths, eligibleRatingRecords, participationConfidence } from './ratings.js';
 import { leaguesForSession } from './leagues.js';
 import { historyForOfficialMeetings, historicalPlayers, rankingWithHistory } from './history-stats.js';
-import { withinPeriod } from './periods.js';
+import { halfYear, withinPeriod } from './periods.js';
 import { quarter, validDate } from './model.js';
 import { GUEST_STRENGTH, validateGuests } from './guests.js';
 
 export const PERSONAL_SEED_WEIGHT = 0.5;
-export const PERFORMANCE_SEED_WEIGHT = 0.5;
+export const HALF_YEAR_SEED_WEIGHT = 0.5;
 const clamp = value => Math.max(0, Math.min(1, value));
 
 // Global evidence supplies the seed; only today's attendees determine the cut.
 export function attendanceLeaguesForSession(records, players, baseline, date, { participantIds = players.map(player => player.id), history = [], sessions = [], periods = [], guests = {} } = {}) {
   if (!validDate(date)) throw new Error('모임 날짜를 확인해 주세요.');
   validateGuests(guests);
-  const ids = players.map(player => player.id), priors = initialStrengths(ids, baseline), period = quarter(date);
+  const ids = players.map(player => player.id), priors = initialStrengths(ids, baseline), period = halfYear(date);
   if (new Set(participantIds).size !== participantIds.length || participantIds.some(id => !ids.includes(id) && !Object.hasOwn(guests, id))) throw new Error('참석 멤버 명단을 확인해 주세요.');
-  const actual = eligibleRatingRecords(records, ids, date).filter(match => withinPeriod(period, match.date));
+  const actual = eligibleRatingRecords(records, ids, date);
   const safeHistory = historyForOfficialMeetings(history, sessions).filter(set => set.contributesToRatings !== false && set.datePrecision === 'day' && validDate(set.cutoff) && set.cutoff < date && withinPeriod(period, set.cutoff)).map(set => ({ ...set, rows: (set.rows || []).filter(row => !row.issues?.length && !['identity-unconfirmed', 'quarantine'].includes(row.status) && row.identityStatus !== 'tentative-user-guidance') }));
-  // Cross-quarter totals cannot supply quarterly results or volume. The shared
-  // ranking helper admits only aggregates covered entirely by this quarter.
   const rows = rankingWithHistory(actual, historicalPlayers(safeHistory, players), period, safeHistory);
   const byId = new Map(rows.map(row => [row.id, row]));
+  const currentQuarter = quarter(date);
+  const quarterActual = actual.filter(match => withinPeriod(currentQuarter, match.date));
+  // A half-year total cannot establish quarterly volume unless its coverage
+  // lies entirely inside that quarter. The shared ranking helper enforces this.
+  const quarterRows = rankingWithHistory(quarterActual, players, currentQuarter, safeHistory);
+  const quarterById = new Map(quarterRows.map(row => [row.id, row]));
   const observations = Object.fromEntries(ids.map(id => [id, { games: 0 }]));
-  for (const match of actual) for (const id of [...match.teamA, ...match.teamB]) if (observations[id]) observations[id].games++;
-  const aggregate = Object.fromEntries(ids.map(id => [id, { games: Math.max(0, (byId.get(id)?.games || 0) - observations[id].games) }]));
-  const quarterSessions = sessions.filter(session => validDate(session.date) && withinPeriod(period, session.date));
-  const confidence = participationConfidence(actual, safeHistory, ids, date, period, observations, aggregate, { sessions: quarterSessions, periods });
-  const form = leaguesForSession(actual, ids, baseline, date, { sessions: quarterSessions });
+  for (const match of quarterActual) for (const id of [...match.teamA, ...match.teamB]) if (observations[id]) observations[id].games++;
+  const aggregate = Object.fromEntries(ids.map(id => [id, { games: Math.max(0, (quarterById.get(id)?.games || 0) - observations[id].games) }]));
+  const confidence = participationConfidence(quarterActual, safeHistory, ids, date, currentQuarter, observations, aggregate, { sessions, periods });
+  const form = leaguesForSession(actual, ids, baseline, date, { sessions });
   const seedScores = Object.fromEntries(ids.map(id => {
     const row = byId.get(id);
-    const games = row?.games || 0;
+    const games = quarterById.get(id)?.games || 0;
     const sample = games ** 2 / (games ** 2 + 24 ** 2);
     const reliability = sample * confidence[id];
     let performance = 0.5;
@@ -43,7 +46,7 @@ export function attendanceLeaguesForSession(records, players, baseline, date, { 
     // It does not reserve a permanent seat in today's A.
     const initial = priors[id] >= form.boundary ? 0 : 1;
     performance = clamp(performance + reliability * 0.2 * (initial - form.leagues[id]));
-    return [id, PERSONAL_SEED_WEIGHT * priors[id] + PERFORMANCE_SEED_WEIGHT * performance];
+    return [id, PERSONAL_SEED_WEIGHT * priors[id] + HALF_YEAR_SEED_WEIGHT * performance];
   }));
   for (const id of participantIds) if (Object.hasOwn(guests, id)) seedScores[id] = GUEST_STRENGTH;
   const names = Object.fromEntries(players.map(player => [player.id, player.name || player.id]));
