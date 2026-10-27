@@ -35,7 +35,8 @@ if (option('--compare-ref')) {
   source = source.replace("'./schedule-pools.js'", JSON.stringify(pathToFileURL(process.cwd() + '/src/schedule-pools.js').href));
   for (const file of ['mixing-policy.js', 'bounded-mixing-plan.js']) source = source.replace("'./" + file + "'", JSON.stringify(pathToFileURL(process.cwd() + '/src/' + file).href));
   const previous = await import('data:text/javascript;base64,' + Buffer.from(source).toString('base64'));
-  versions.unshift({ name: option('--compare-ref'), generate: previous.generateSchedule, allocate: previous.allocateForWindow, leagueMode: source.includes('leagues = {}') });
+  const daily = execFileSync('git', ['show', `${option('--compare-ref')}:src/app.js`], { encoding: 'utf8' }).includes('attendanceLeaguesForSession');
+  versions.unshift({ name: option('--compare-ref'), generate: previous.generateSchedule, allocate: previous.allocateForWindow, leagueMode: source.includes('leagues = {}'), daily });
 }
 function seeded(seed) { return () => { seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0; return seed / 4294967296; }; }
 const ids10 = ['gdr001', 'gdr002', 'gdr003', 'gdr004', 'gdr006', 'gdr007', 'gdr009', 'gdr010', 'gdr011', 'gdr012'];

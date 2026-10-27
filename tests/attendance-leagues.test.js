@@ -91,3 +91,15 @@ test('daily grouping integrates with time, exact quotas and the one-outing mixin
   for(const id of participants)assert.equal(Object.values(result.matchMap).filter(m=>[...m.teamA,...m.teamB].includes(id)).length,quotas[id]);
  }
 });
+
+test('fourteen-member meetings include mixed games in both normal windows without extra rests',()=>{
+ const {leagues,seedScores:strengths}=attendanceLeaguesForSession([],players,baseline,date,{participantIds:members});
+ for(const rounds of [4,6])for(const seed of [7,73,2026]){
+  const quotas=allocateForWindow(members,rounds,[],{leagues,strengths,random:seeded(seed)});
+  const result=generateSchedule(members,quotas,{leagues,strengths,random:seeded(seed),attempts:80});
+  const counts=mixingCounts(result.matchMap,leagues,members);
+  assert(result.mixedMatches>=2);assert.equal(result.consecutiveRests,0);
+  assert(Object.values(counts).every(n=>n<=1));
+  assert(Object.values(counts).filter(n=>n===1).length>=8);
+ }
+});

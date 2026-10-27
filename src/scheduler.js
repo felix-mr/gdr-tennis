@@ -3,7 +3,7 @@ import { allocateMixingQuotas, mixingLimits } from './mixing-policy.js';
 import { MAX_ROUNDS } from './model.js';
 import { planLeaguePools, chooseLeagueActive, poolsRestFeasible, poolFeasible, allocateUnitQuotas } from './schedule-pools.js';
 import { STRENGTH_STEP, TEAM_GAP_ALLOWANCE, ROTATING_PLAYERS, pairKey, recentPairingHistory, nearbyPairing, matchSpreadCost } from './pairing-policy.js';
-const schedulePriorities = result => [result.mixedOverLimit || 0, result.consecutiveRests, result.severeGap, result.qualityGap, result.partnerRepeats, result.maxFixedOpponentMeetings, result.fixedOpponentCost, result.mixedMatches || 0, result.cost];
+const schedulePriorities = result => [result.mixedOverLimit || 0, result.consecutiveRests, result.severeGap, result.qualityGap, -(result.mixedPlayers || 0), result.partnerRepeats, result.maxFixedOpponentMeetings, result.fixedOpponentCost, result.cost];
 const betterSchedule = (candidate, previous) => {
   if (!previous) return true;
   const before = schedulePriorities(previous), after = schedulePriorities(candidate);
@@ -23,7 +23,7 @@ export function allocateGames(ids, target, totals = {}) {
   }
   return counts;
 }
-export function generateSchedule(ids, quotas, { random = Math.random, attempts = 250, strengths = {}, lockedPairs = [], preferredPairs = [], timingPreferences = {}, previousSchedules = [], meetingDate = '', leagues = {}, separatePools = true, relaxMixing = false, plannedRounds = null } = {}) {
+export function generateSchedule(ids, quotas, { random = Math.random, attempts = 250, strengths = {}, lockedPairs = [], preferredPairs = [], timingPreferences = {}, previousSchedules = [], meetingDate = '', leagues = {}, separatePools = true, relaxMixing = false, plannedRounds = null, preferMixing = false } = {}) {
   if (ids.length < 4 || new Set(ids).size !== ids.length || Object.keys(quotas).length !== ids.length || ids.some(id => !Number.isInteger(quotas[id]) || quotas[id] < 2 || quotas[id] > MAX_ROUNDS)) throw new Error('참가자별 최소 2경기를 모임 시간에 맞춰 주세요.');
   const units = pairUnits(ids, lockedPairs);
   const leagueMode = ids.every(id => [0, 1].includes(leagues[id]));
@@ -98,7 +98,10 @@ export function generateSchedule(ids, quotas, { random = Math.random, attempts =
         const nearbyTrials = new Set(active.map(strength)).size > 1 ? 18 : 6;
         pairing = null;
         for (let trial = 0; trial < 45; trial++) {
-          const shuffled = roundGroups.flatMap(group => {
+          // Keep the activity plan (quotas, fixed units and rest spacing), but
+          // also try crossing its court boundaries for one social outing.
+          const trialGroups = preferMixing && poolPlan && trial >= nearbyTrials ? [active] : roundGroups;
+          const shuffled = trialGroups.flatMap(group => {
             const fixedTeams = lockedPairs.filter(pair => group.includes(pair[0]));
             const fixedIds = new Set(fixedTeams.flat());
             const loose = group.filter(id => !fixedIds.has(id)).map(id => ({ id, value: random() })).sort((a, b) => a.value - b.value).map(x => x.id);
@@ -132,7 +135,10 @@ export function generateSchedule(ids, quotas, { random = Math.random, attempts =
               for (const id of other) penalty += 200 * (fixedOpponents[`${pairKey(...team)}>${id}`] || 0);
             }
           }
-          penalty += 600 * gapCost + 40 * mixedCost;
+          // Reward a first mixed outing, never additional outings granted only
+          // by a fixed-pair/attendance exception. Safety and team gaps still lead.
+          const firstMixed = mixedIds.filter(id => !mixedUses[id]).length;
+          penalty += 600 * gapCost + 40 * mixedCost - (preferMixing ? 180 * firstMixed : 0);
           if (!pairing || severeCost < pairing.severeCost - 1e-9 || (Math.abs(severeCost - pairing.severeCost) <= 1e-9 && penalty < pairing.penalty)) pairing = { shuffled, penalty, gapCost, severeCost, mixedCost };
         }
         if (pairing) break;
@@ -183,11 +189,12 @@ export function generateSchedule(ids, quotas, { random = Math.random, attempts =
       const fixedOpponentCost = Object.values(fixedOpponents).reduce((sum, count) => sum + count * (count - 1) / 2, 0);
       const mixedMatches = leagueMode ? Object.values(matchMap).filter(match => new Set([...match.teamA, ...match.teamB].map(id => leagues[id])).size > 1).length : 0;
       const mixedOverLimit = Object.values(mixedUses).reduce((sum, n) => sum + Math.max(0, n - 1), 0);
-      const candidate = { matchMap, cost, excessGap, severeGap, qualityGap, consecutiveRests, partnerRepeats, maxFixedOpponentMeetings, fixedOpponentCost, mixedMatches, mixedOverLimit, mixedByPlayer: Object.fromEntries(ids.map(id => [id, mixedUses[id] || 0])), pooled: !!poolPlan };
+      const mixedPlayers = Object.values(mixedUses).filter(n => n > 0).length;
+      const candidate = { matchMap, cost, excessGap, severeGap, qualityGap, consecutiveRests, partnerRepeats, maxFixedOpponentMeetings, fixedOpponentCost, mixedMatches, mixedOverLimit, mixedPlayers, mixedByPlayer: Object.fromEntries(ids.map(id => [id, mixedUses[id] || 0])), pooled: !!poolPlan };
       if (betterSchedule(candidate, best)) best = candidate;
     }
   }
-  const retry = { random, attempts, strengths, lockedPairs, preferredPairs, timingPreferences, previousSchedules, meetingDate, leagues, separatePools: false, relaxMixing };
+  const retry = { random, attempts, strengths, lockedPairs, preferredPairs, timingPreferences, previousSchedules, meetingDate, leagues, separatePools: false, relaxMixing, preferMixing };
   if (poolPlan && (!best || best.mixedOverLimit || best.consecutiveRests || best.severeGap > 1e-9 || best.qualityGap > 1e-9 || best.partnerRepeats || best.fixedOpponentCost)) {
     try { const alternative = generateSchedule(ids, quotas, { ...retry, attempts: Math.min(attempts, 100) }); if (betterSchedule(alternative, best)) best = alternative; }
     catch (failure) { if (!best) throw failure; }
@@ -199,6 +206,14 @@ export function generateSchedule(ids, quotas, { random = Math.random, attempts =
   if (!best && leagueMode && lockedPairs.length && !relaxMixing) best = generateSchedule(ids, quotas, { ...retry, relaxMixing: true });
   if (!best && lockedPairs.length) throw new Error('고정 페어를 모두 유지하며 배정하지 못했습니다. 참석자·개인 경기 수를 조정하거나 일부 페어를 해제해 주세요.');
   if (!best) throw new Error('이 경기 수 조합으로 배정하지 못했습니다. 개인 경기 수를 고르게 조정해 주세요.');
+  // Preserve the original feasible draw before trying a social alternative.
+  // Rest spacing and large team gaps outrank mixed-outing coverage.
+  if (!preferMixing && leagueMode && separatePools && !plannedRounds && new Set(ids.map(id => leagues[id])).size > 1) {
+    try {
+      const alternative = generateSchedule(ids, quotas, { ...retry, separatePools: true, preferMixing: true, attempts: Math.min(attempts, 100) });
+      if (betterSchedule(alternative, best)) best = alternative;
+    } catch { /* Keep the valid baseline when no bounded alternative exists. */ }
+  }
   const gaps = Object.values(best.matchMap).map(match => Math.abs(match.teamA.reduce((sum, id) => sum + strength(id), 0) - match.teamB.reduce((sum, id) => sum + strength(id), 0)));
   best.balance = { averageGap: gaps.reduce((a, b) => a + b, 0) / gaps.length, maxGap: Math.max(...gaps) };
   return best;

@@ -19,11 +19,33 @@ test('mixing counts every participant in a mixed match, including teammates from
  assert.deepEqual(counts,{p0:1,p1:1,p2:0,p3:0,p4:1,p5:1,p6:0,p7:0});
 });
 
-test('unnecessary mixing is not forced when same-group matches already satisfy the objectives',()=>{
+test('a first mixed outing is preferred even when pure games were already feasible',()=>{
  const {ids,leagues,strengths}=setup(4,4),quotas=Object.fromEntries(ids.map(id=>[id,2]));
  const result=generateSchedule(ids,quotas,{leagues,strengths,random:seeded(73),attempts:60});
- assert.equal(result.mixedMatches,0);assert.equal(result.consecutiveRests,0);
+ assert.equal(result.mixedMatches,2);assert.equal(result.consecutiveRests,0);
+ assert(Object.values(verify(result,ids,quotas,leagues,[],2)).every(n=>n===1));
+});
+
+test('mixing covers different people instead of reusing the same eight players',()=>{
+ const {ids,leagues,strengths}=setup(8,8),quotas=Object.fromEntries(ids.map(id=>[id,2]));
+ const result=generateSchedule(ids,quotas,{leagues,strengths,random:seeded(73),attempts:80});
+ assert(Object.values(verify(result,ids,quotas,leagues,[],4)).every(n=>n===1));
+ assert.equal(result.consecutiveRests,0);
+});
+
+test('a one-group meeting does not invent mixed outings',()=>{
+ const {ids,strengths}=setup(4,4),leagues=Object.fromEntries(ids.map(id=>[id,0])),quotas=Object.fromEntries(ids.map(id=>[id,2]));
+ const result=generateSchedule(ids,quotas,{leagues,strengths,random:seeded(73),attempts:40});
+ assert.equal(result.mixedMatches,0);assert.equal(result.mixedPlayers,0);
  verify(result,ids,quotas,leagues,[],2);
+});
+
+test('mixing is skipped when fixed teams would create a severe mismatch',()=>{
+ const {ids,leagues}=setup(4,4),strengths=Object.fromEntries(ids.map(id=>[id,leagues[id]===0?0.9:0.1]));
+ const pairs=[['p0','p1'],['p2','p3'],['p4','p5'],['p6','p7']],quotas=Object.fromEntries(ids.map(id=>[id,2]));
+ const result=generateSchedule(ids,quotas,{leagues,strengths,lockedPairs:pairs,random:seeded(73),attempts:60});
+ assert.equal(result.mixedMatches,0);assert.equal(result.balance.maxGap,0);
+ verify(result,ids,quotas,leagues,pairs,2);
 });
 
 test('one mixed outing per person can reduce fixed-opponent and partner repetition',()=>{
