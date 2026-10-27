@@ -5,6 +5,7 @@ import { initialStrengths } from '../src/ratings.js';
 import { planLeaguePools, poolFeasible, poolsFeasible, poolsRestFeasible } from '../src/schedule-pools.js';
 import { allocateForWindow, generateSchedule } from '../src/scheduler.js';
 import { validateSession } from '../src/model.js';
+import { mixingCounts } from '../src/mixing-policy.js';
 import baseline from '../data/strength-baseline.json' with { type: 'json' };
 const seeded = value => () => { value = (Math.imul(value, 1664525) + 1013904223) >>> 0; return value / 4294967296; };
 const ids = Array.from({length:14},(_,i)=>`p${i}`);
@@ -68,14 +69,15 @@ function verify(result, participants, quotas, lockedPairs, rounds, guests={}) {
  for(const pair of lockedPairs) for(const m of Object.values(result.matchMap)) if([...m.teamA,...m.teamB].some(id=>pair.includes(id))) assert([m.teamA,m.teamB].some(team=>pair.every(id=>team.includes(id))));
 }
 
-test('14 members play within their internal group, with fair quotas and no consecutive rests',()=>{
+test('14 members primarily play within their group, with at most one mixed outing and fair quotas',()=>{
  const members=baseline.groups.flat(),strengths=initialStrengths(members,baseline),{leagues}=leaguesForSession([],members,baseline,'2026-11-01');
  for(const rounds of [4,6]) {
   const plan=planLeaguePools(members,rounds,[],{leagues,strengths,random:seeded(73)});
   assert.equal(plan.moved,0);
   const result=generateSchedule(members,plan.quotas,{leagues,strengths,random:seeded(73),attempts:40});
   verify(result,members,plan.quotas,[],rounds);
-  assert.equal(result.pooled,true);assert.equal(result.mixedMatches,0);assert.equal(result.consecutiveRests,0);
+  assert(Object.values(mixingCounts(result.matchMap,leagues,members)).every(n=>n<=1));
+  assert(result.mixedMatches<=Math.floor(members.length/4));assert.equal(result.consecutiveRests,0);
   assert(Math.max(...Object.values(plan.quotas))-Math.min(...Object.values(plan.quotas))<=1);
  }
 });
@@ -87,7 +89,7 @@ test('promoted members actually play in the upper group when its size grows to t
  assert(plan.pools[0].includes('p8')&&plan.pools[0].includes('p9'));
  const result=generateSchedule(ids,plan.quotas,{leagues,strengths:prior.ratings,random:seeded(2026),attempts:40});
  verify(result,ids,plan.quotas,[],6);
- assert.equal(result.mixedMatches,0);
+  assert(Object.values(mixingCounts(result.matchMap,leagues,ids)).every(n=>n<=1));
   assert.equal(result.consecutiveRests,0);
  assert(Object.values(result.matchMap).some(match=>match.round===1));
  const counts=Object.values(plan.quotas);assert(Math.max(...counts)-Math.min(...counts)<=1);

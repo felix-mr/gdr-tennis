@@ -7,6 +7,7 @@ import { initialStrengths, strengthsForSession } from '../src/ratings.js';
 import { STRENGTH_STEP } from '../src/pairing-policy.js';
 import { validateSession, koreaToday, nextSunday } from '../src/model.js';
 import { leaguesForSession } from '../src/leagues.js';
+import { mixingCounts } from '../src/mixing-policy.js';
 import players from '../data/players.json' with { type: 'json' };
 import baseline from '../data/strength-baseline.json' with { type: 'json' };
 import periods from '../data/periods.json' with { type: 'json' };
@@ -30,8 +31,9 @@ if (option('--compare-ref')) {
     const policy = execFileSync('git', ['show', `${option('--compare-ref')}:src/pairing-policy.js`], { encoding: 'utf8' }).replace("'./model.js'", JSON.stringify(pathToFileURL(process.cwd() + '/src/model.js').href)).replace("'./periods.js'", JSON.stringify(pathToFileURL(process.cwd() + '/src/periods.js').href));
     source = source.replace("'./pairing-policy.js'", JSON.stringify('data:text/javascript;base64,' + Buffer.from(policy).toString('base64')));
   }
+  source = source.replace("'./schedule-pools.js'", JSON.stringify(pathToFileURL(process.cwd() + '/src/schedule-pools.js').href));
   const previous = await import('data:text/javascript;base64,' + Buffer.from(source).toString('base64'));
-  versions.unshift({ name: option('--compare-ref'), generate: previous.generateSchedule, allocate: previous.allocateForWindow, leagueMode: false });
+  versions.unshift({ name: option('--compare-ref'), generate: previous.generateSchedule, allocate: previous.allocateForWindow, leagueMode: source.includes('leagues = {}') });
 }
 function seeded(seed) { return () => { seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0; return seed / 4294967296; }; }
 const ids10 = ['gdr001', 'gdr002', 'gdr003', 'gdr004', 'gdr006', 'gdr007', 'gdr009', 'gdr010', 'gdr011', 'gdr012'];
@@ -47,7 +49,7 @@ const cases = [
 const report = { runs, mode, inputMatches: input.records.length, historySets: input.history.length, initial, current, baseDate, sequence: mode === 'fresh' ? 'Repeated previews against unchanged saved history.' : 'Independent blocks of 10 hypothetical weekly meetings; no invented scores.', cases: [] };
 for (const scenario of cases) for (const version of versions) {
   const stats = {}, gaps = [], courtGaps = [], meetingCourtGaps = [], durations = [], cohorts = { top: 0, bottom: 0, upperSix: 0, lowerSix: 0, withinTwoSteps: 0, pureGroups: 0 };
-  let recent = [], rests = 0, partnerRepeats = 0, pooledDraws = 0;
+  let recent = [], rests = 0, partnerRepeats = 0, pooledDraws = 0, maxMixedPerPlayer = 0, mixingExceptionDraws = 0;
   for (let sample = 0; sample < runs; sample++) {
     if (mode === 'fresh' || sample % 10 === 0) recent = Object.values(input.state.sessions);
     const week = sample % 10;
@@ -74,6 +76,11 @@ for (const scenario of cases) for (const version of versions) {
     const start = performance.now();
     const result = version.generate(ids, quotas, { strengths, lockedPairs: scenario.lockedPairs || [], previousSchedules: recent, meetingDate: date, random, ...(version.leagueMode ? { leagues } : {}) });
     if (result.pooled) pooledDraws++;
+    const mixed = mixingCounts(result.matchMap, leagues, ids), maxMixed = Math.max(...Object.values(mixed));
+    maxMixedPerPlayer = Math.max(maxMixedPerPlayer, maxMixed);
+    const eligibleException = (scenario.lockedPairs || []).length || [0, 1].some(group => ids.some(id => leagues[id] === group) && ids.filter(id => leagues[id] === group).length < 4);
+    if (maxMixed > 1) mixingExceptionDraws++;
+    if (version.name === 'new' && !eligibleException && maxMixed > 1) throw new Error('Per-person mixing limit exceeded.');
     durations.push(performance.now() - start);
     const fixedPlayerIds = ids.filter(id => allIds.includes(id));
     const guests = Object.fromEntries(ids.filter(id => id.startsWith('guest')).map(id => [id, { name: id }]));
@@ -124,7 +131,7 @@ for (const scenario of cases) for (const version of versions) {
     const deviation = (counts, multiplier) => Math.sqrt(mean(expected.map(([other, value]) => ((counts[other] || 0) - multiplier * value) ** 2))) / mean(expected.map(([, value]) => multiplier * value));
     return { id, name: names[id] || id, games: row.games, meetings: row.meetings, uniquePartners: Object.keys(row.partners).length, maxPartnerPercent: pct(Math.max(...Object.values(row.partners))), partnerDrawPercent: Object.fromEntries(Object.entries(row.partnerDraws).map(([other, count]) => [other, +(100 * count / row.meetings).toFixed(1)])), maxOpponentPercent: pct(Math.max(...Object.values(row.opponents))) / 2, lowPartnerPercent: pct((row.partners.gdr010 || 0) + (row.partners.gdr011 || 0)), partnerDeviation: deviation(row.partners, 1), opponentDeviation: deviation(row.opponents, 2), partners: row.partners, opponents: row.opponents };
   });
-  const result = { scenario: scenario.name, version: version.name, matches: gaps.length, rests, partnerRepeats, pooledDraws, cohorts, teamGap: { mean: mean(gaps), p95: percentile(gaps, 0.95), max: Math.max(...gaps), above2Percent: 100 * gaps.filter(gap => gap > 2 + 1e-8).length / gaps.length, above3Percent: 100 * gaps.filter(gap => gap > 3 + 1e-8).length / gaps.length, above4Percent: 100 * gaps.filter(gap => gap > 4 + 1e-8).length / gaps.length }, courtGapMean: mean(courtGaps), meetingCourtGap: { mean: mean(meetingCourtGaps), max: Math.max(...meetingCourtGaps) }, partnerDeviationMean: mean(rows.map(row => row.partnerDeviation)), opponentDeviationMean: mean(rows.map(row => row.opponentDeviation)), durationMs: { mean: mean(durations), p95: percentile(durations, 0.95) }, players: rows };
+  const result = { scenario: scenario.name, version: version.name, matches: gaps.length, rests, partnerRepeats, pooledDraws, maxMixedPerPlayer, mixingExceptionDraws, cohorts, teamGap: { mean: mean(gaps), p95: percentile(gaps, 0.95), max: Math.max(...gaps), above2Percent: 100 * gaps.filter(gap => gap > 2 + 1e-8).length / gaps.length, above3Percent: 100 * gaps.filter(gap => gap > 3 + 1e-8).length / gaps.length, above4Percent: 100 * gaps.filter(gap => gap > 4 + 1e-8).length / gaps.length }, courtGapMean: mean(courtGaps), meetingCourtGap: { mean: mean(meetingCourtGaps), max: Math.max(...meetingCourtGaps) }, partnerDeviationMean: mean(rows.map(row => row.partnerDeviation)), opponentDeviationMean: mean(rows.map(row => row.opponentDeviation)), durationMs: { mean: mean(durations), p95: percentile(durations, 0.95) }, players: rows };
   report.cases.push(result);
   console.log(JSON.stringify({ ...result, players: rows.filter(row => ['gdr001', 'gdr002'].includes(row.id)) }));
 }
