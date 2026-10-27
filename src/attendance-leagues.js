@@ -5,8 +5,8 @@ import { halfYear, withinPeriod } from './periods.js';
 import { validDate } from './model.js';
 import { GUEST_STRENGTH, validateGuests } from './guests.js';
 
-export const PERSONAL_SEED_WEIGHT = 0.65;
-export const HALF_YEAR_SEED_WEIGHT = 0.35;
+export const PERSONAL_SEED_WEIGHT = 0.5;
+export const HALF_YEAR_SEED_WEIGHT = 0.5;
 const clamp = value => Math.max(0, Math.min(1, value));
 
 // Global evidence supplies the seed; only today's attendees determine the cut.
@@ -34,8 +34,8 @@ export function attendanceLeaguesForSession(records, players, baseline, date, { 
       const sample = row.games ** 2 / (row.games ** 2 + 24 ** 2);
       performance += sample * confidence[id] * (winRate - 0.5);
     }
-    // A verified form change affects the secondary signal, never the majority
-    // personal component. It does not reserve a permanent seat in today's A.
+    // A verified form change adjusts performance, not the personal component.
+    // It does not reserve a permanent seat in today's A.
     const initial = priors[id] >= form.boundary ? 0 : 1;
     performance = clamp(performance + 0.2 * (initial - form.leagues[id]));
     return [id, PERSONAL_SEED_WEIGHT * priors[id] + HALF_YEAR_SEED_WEIGHT * performance];

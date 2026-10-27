@@ -13,11 +13,11 @@ const game=(day='2026-10-11',outcome='teamA')=>({date:day,round:1,court:1,teamA:
 const seeded=value=>()=>{value=(Math.imul(value,1664525)+1013904223)>>>0;return value/4294967296};
 const snapshot=rows=>({id:'h2-rates',kind:'individual-aggregate',aggregationRole:'period-baseline',contributesToLiveRanking:true,datePrecision:'day',period:'2026-H2',periodStart:'2026-07-01',cutoff:'2026-10-18',rows:rows.map(([playerId,wins,losses,draws=0])=>({playerId,stats:{wins,draws,losses,scored:6*wins+3*losses+4*draws,conceded:3*wins+6*losses+4*draws}}))});
 
-test('personal weights remain the majority at 65 percent and no results stay neutral',()=>{
+test('personal weights and confidence-adjusted performance contribute equally with no results staying neutral',()=>{
  const result=attendanceLeaguesForSession([],players,baseline,date,{participantIds:members});
  const priors=initialStrengths(players.map(p=>p.id),baseline);
- assert.equal(PERSONAL_SEED_WEIGHT,0.65);assert.equal(HALF_YEAR_SEED_WEIGHT,0.35);
- for(const id of members)assert.equal(result.seedScores[id],0.65*priors[id]+0.35*0.5);
+ assert.equal(PERSONAL_SEED_WEIGHT,0.5);assert.equal(HALF_YEAR_SEED_WEIGHT,0.5);
+ for(const id of members)assert.equal(result.seedScores[id],0.5*priors[id]+0.5*0.5);
  assert(result.cut>=4&&members.length-result.cut>=4);
 });
 
@@ -52,10 +52,12 @@ test('half-year win rate orders equal personal weights and sparse results have l
  assert.equal(draw.seedScores.p2,0.5);
 });
 
-test('a large personal difference remains stronger than the secondary ranking signal',()=>{
+test('enough results can overcome a large personal difference while one result cannot',()=>{
  const ratings=Object.fromEntries(neutral.map((p,i)=>[p.id,i<2?0.9:i>5?0.1:0.5]));
+ const sparse=attendanceLeaguesForSession([game('2026-10-11','teamB')],neutral,{ratings},date);
+ assert(sparse.seedScores.p0>sparse.seedScores.p6);
  const result=attendanceLeaguesForSession(Array(100).fill(game('2026-10-11','teamB')),neutral,{ratings},date);
- assert(result.seedScores.p0>result.seedScores.p6);
+ assert(result.seedScores.p6>result.seedScores.p0);
 });
 
 test('a better established win rate outranks more cumulative points at equal personal weights',()=>{
