@@ -7,6 +7,7 @@ import { initialStrengths, strengthsForSession } from '../src/ratings.js';
 import { STRENGTH_STEP } from '../src/pairing-policy.js';
 import { validateSession, koreaToday, nextSunday } from '../src/model.js';
 import { leaguesForSession } from '../src/leagues.js';
+import { attendanceLeaguesForSession } from '../src/attendance-leagues.js';
 import { mixingCounts } from '../src/mixing-policy.js';
 import players from '../data/players.json' with { type: 'json' };
 import baseline from '../data/strength-baseline.json' with { type: 'json' };
@@ -24,7 +25,7 @@ const allIds = players.map(player => player.id), ids14 = allIds.slice(0, 14);
 const names = Object.fromEntries(players.map(player => [player.id, player.name]));
 const initial = initialStrengths(allIds, baseline);
 const current = strengthsForSession(input.records, allIds, baseline, baseDate, input.history, { sessions: Object.values(input.state?.sessions || {}), periods });
-const versions = [{ name: 'new', generate: generateSchedule, allocate: allocateForWindow, leagueMode: true }];
+const versions = [{ name: 'new', generate: generateSchedule, allocate: allocateForWindow, leagueMode: true, daily: true }];
 if (option('--compare-ref')) {
   let source = execFileSync('git', ['show', `${option('--compare-ref')}:src/scheduler.js`], { encoding: 'utf8' }).replace("'./model.js'", JSON.stringify(pathToFileURL(process.cwd() + '/src/model.js').href));
   if (source.includes("'./pairing-policy.js'")) {
@@ -32,6 +33,7 @@ if (option('--compare-ref')) {
     source = source.replace("'./pairing-policy.js'", JSON.stringify('data:text/javascript;base64,' + Buffer.from(policy).toString('base64')));
   }
   source = source.replace("'./schedule-pools.js'", JSON.stringify(pathToFileURL(process.cwd() + '/src/schedule-pools.js').href));
+  for (const file of ['mixing-policy.js', 'bounded-mixing-plan.js']) source = source.replace("'./" + file + "'", JSON.stringify(pathToFileURL(process.cwd() + '/src/' + file).href));
   const previous = await import('data:text/javascript;base64,' + Buffer.from(source).toString('base64'));
   versions.unshift({ name: option('--compare-ref'), generate: previous.generateSchedule, allocate: previous.allocateForWindow, leagueMode: source.includes('leagues = {}') });
 }
@@ -56,10 +58,17 @@ for (const scenario of cases) for (const version of versions) {
     const futureDate = new Date(baseDate + 'T00:00:00Z'); futureDate.setUTCDate(futureDate.getUTCDate() + week * 7);
     const date = mode === 'fresh' ? baseDate : futureDate.toISOString().slice(0, 10);
     const grouping = leaguesForSession(input.records, allIds, baseline, date, { sessions: Object.values(input.state.sessions) });
-    const leagues = { ...grouping.leagues, guest001: GUEST_STRENGTH >= grouping.boundary ? 0 : 1, guest002: GUEST_STRENGTH >= grouping.boundary ? 0 : 1 };
+    let leagues = { ...grouping.leagues, guest001: GUEST_STRENGTH >= grouping.boundary ? 0 : 1, guest002: GUEST_STRENGTH >= grouping.boundary ? 0 : 1 };
     const random = seeded(9137 + sample * 104729);
     let ids = scenario.ids;
     if (scenario.variable) ids = [...ids].map(id => ({ id, value: random() })).sort((a, b) => a.value - b.value).slice(0, [8, 10, 12, 14][sample % 4]).map(item => item.id);
+    const guestProfiles = Object.fromEntries(ids.filter(id => id.startsWith('guest')).map(id => [id, { name: id }]));
+    let strengths = { ...current, guest001: GUEST_STRENGTH, guest002: GUEST_STRENGTH };
+    if (version.daily) {
+      const grouping = attendanceLeaguesForSession(input.records, players, baseline, date, { participantIds: ids, history: input.history, sessions: Object.values(input.state.sessions), periods, guests: guestProfiles });
+      leagues = grouping.leagues; strengths = grouping.seedScores;
+    }
+    if (scenario.drift) ids14.forEach((id, index) => { strengths[id] = Math.max(0, Math.min(1, strengths[id] + 0.25 * (week / 9) * (index % 2 ? 1 : -1))); });
     const lockedIds = new Set((scenario.lockedPairs || []).flat());
     const units = [...(scenario.lockedPairs || []), ...ids.filter(id => !lockedIds.has(id)).map(id => [id])];
     const offset = sample % units.length;
@@ -68,11 +77,9 @@ for (const scenario of cases) for (const version of versions) {
     let quotas = Object.fromEntries(order.map((id, i) => [id, Math.floor(slots / ids.length) + Number(i < slots % ids.length)]));
     if (mode === 'fresh') {
       const originalRandom = Math.random;
-      try { Math.random = random; quotas = version.allocate(ids, scenario.rounds, scenario.lockedPairs || [], version.leagueMode ? { leagues, strengths: current, random } : {}); }
+      try { Math.random = random; quotas = version.allocate(ids, scenario.rounds, scenario.lockedPairs || [], version.leagueMode ? { leagues, strengths, random } : {}); }
       finally { Math.random = originalRandom; }
     }
-    const strengths = { ...current, guest001: GUEST_STRENGTH, guest002: GUEST_STRENGTH };
-    if (scenario.drift) ids14.forEach((id, index) => { strengths[id] = Math.max(0, Math.min(1, current[id] + 0.25 * (week / 9) * (index % 2 ? 1 : -1))); });
     const start = performance.now();
     const result = version.generate(ids, quotas, { strengths, lockedPairs: scenario.lockedPairs || [], previousSchedules: recent, meetingDate: date, random, ...(version.leagueMode ? { leagues } : {}) });
     if (result.pooled) pooledDraws++;

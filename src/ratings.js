@@ -80,7 +80,7 @@ export function eligibleRatingRecords(records, ids, date) {
 
 const sampleWeight = (games, priorGames) => games ** 2 / (games ** 2 + priorGames ** 2);
 
-function participationConfidence(actual, history, ids, date, period, observations, aggregate, context) {
+export function participationConfidence(actual, history, ids, date, period, observations, aggregate, context) {
   const totals = ids.map(id => observations[id].games + aggregate[id].games);
   const positive = totals.filter(games => games > 0).sort((a, b) => a - b);
   // A robust peer benchmark prevents one unusually busy member dominating.
