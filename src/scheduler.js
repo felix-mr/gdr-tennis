@@ -1,4 +1,5 @@
 import { MAX_ROUNDS } from './model.js';
+import { planLeaguePools, chooseLeagueActive, poolsRestFeasible, poolFeasible, allocateUnitQuotas } from './schedule-pools.js';
 import { STRENGTH_STEP, TEAM_GAP_ALLOWANCE, ROTATING_PLAYERS, pairKey, recentPairingHistory, nearbyPairing, matchSpreadCost } from './pairing-policy.js';
 // Retained for old fixed-target schedules. New schedules use the meeting window.
 export function allocateGames(ids, target, totals = {}) {
@@ -13,10 +14,11 @@ export function allocateGames(ids, target, totals = {}) {
   }
   return counts;
 }
-export function generateSchedule(ids, quotas, { random = Math.random, attempts = 250, strengths = {}, lockedPairs = [], preferredPairs = [], timingPreferences = {}, previousSchedules = [], meetingDate = '' } = {}) {
+export function generateSchedule(ids, quotas, { random = Math.random, attempts = 250, strengths = {}, lockedPairs = [], preferredPairs = [], timingPreferences = {}, previousSchedules = [], meetingDate = '', leagues = {}, separatePools = true } = {}) {
   if (ids.length < 4 || new Set(ids).size !== ids.length || Object.keys(quotas).length !== ids.length || ids.some(id => !Number.isInteger(quotas[id]) || quotas[id] < 2 || quotas[id] > MAX_ROUNDS)) throw new Error('참가자별 최소 2경기를 모임 시간에 맞춰 주세요.');
   const units = pairUnits(ids, lockedPairs);
-  const rotating = new Set(ROTATING_PLAYERS.filter(id => ids.includes(id)));
+  const leagueMode = ids.every(id => [0, 1].includes(leagues[id]));
+  const rotating = new Set(leagueMode ? [] : ROTATING_PLAYERS.filter(id => ids.includes(id)));
   const rotationKey = pairKey(...ROTATING_PLAYERS);
   const opponentLimit = rotating.size === 2 ? Math.min(...ROTATING_PLAYERS.map(id => quotas[id])) - 1 : Infinity;
   pairUnits(ids, preferredPairs);
@@ -29,6 +31,10 @@ export function generateSchedule(ids, quotas, { random = Math.random, attempts =
   const rounds = Math.max(...Object.values(quotas), Math.ceil(slots / (ids.length >= 8 ? 8 : 4)));
   if (rounds > MAX_ROUNDS) throw new Error('모임 시간을 같은 날 안에서 설정해 주세요.');
   const strength = id => Number.isFinite(strengths[id]) && strengths[id] >= 0 && strengths[id] <= 1 ? strengths[id] : 0.5;
+  const poolPlan = leagueMode && separatePools ? planLeaguePools(ids, rounds, lockedPairs, { leagues, strengths, quotas, random }) : null;
+  const poolUnits = poolPlan?.pools.map(pool => units.filter(unit => pool.includes(unit[0])));
+  const poolMemo = new Map();
+  const avoidDoubleRests = poolPlan && !Object.keys(timingPreferences).length && poolsRestFeasible(poolUnits, quotas, rounds, [], poolMemo);
   const history = recentPairingHistory(previousSchedules, meetingDate, ids);
   if (Object.entries(timingPreferences).some(([id, value]) => !ids.includes(id) || !['early', 'late'].includes(value))) throw new Error('멤버별 시작·마무리 선택을 확인해 주세요.');
   // Random candidate order alone still converges on the same cheapest partners.
@@ -59,32 +65,42 @@ export function generateSchedule(ids, quotas, { random = Math.random, attempts =
         const included = choose(index + 1, needed - candidates[index].length);
         return included ? [...candidates[index], ...included] : choose(index + 1, needed);
       };
-      const optionalIds = choose(0, count - requiredIds.length);
-      if (!optionalIds) { failed = true; break; }
-      const active = [...requiredIds, ...optionalIds];
+      let active;
+      if (poolPlan) {
+        active = chooseLeagueActive(poolUnits, remaining, future, [...requiredUnits, ...candidates], restStreak, poolMemo, avoidDoubleRests);
+        if (!active) { failed = true; break; }
+      } else {
+        const optionalIds = choose(0, count - requiredIds.length);
+        if (!optionalIds) { failed = true; break; }
+        active = [...requiredIds, ...optionalIds];
+      }
+      const roundGroups = poolPlan ? poolPlan.pools.map(pool => active.filter(id => pool.includes(id))) : [active];
       const nearbyTrials = new Set(active.map(strength)).size > 1 ? 18 : 6;
       let pairing = null;
       for (let trial = 0; trial < 45; trial++) {
-        const fixedTeams = lockedPairs.filter(pair => active.includes(pair[0]));
-        const fixedIds = new Set(fixedTeams.flat());
-        const loose = active.filter(id => !fixedIds.has(id)).map(id => ({ id, value: random() })).sort((a, b) => a.value - b.value).map(x => x.id);
-        const teams = [...fixedTeams];
-        for (let i = 0; i < loose.length; i += 2) teams.push(loose.slice(i, i + 2));
-        const shuffled = (trial < nearbyTrials ? nearbyPairing(active, lockedPairs, strength, random) : null) || teams.map(team => ({ team, value: random() })).sort((a, b) => a.value - b.value).flatMap(x => x.team);
+        const shuffled = roundGroups.flatMap(group => {
+          const fixedTeams = lockedPairs.filter(pair => group.includes(pair[0]));
+          const fixedIds = new Set(fixedTeams.flat());
+          const loose = group.filter(id => !fixedIds.has(id)).map(id => ({ id, value: random() })).sort((a, b) => a.value - b.value).map(x => x.id);
+          const teams = [...fixedTeams];
+          for (let i = 0; i < loose.length; i += 2) teams.push(loose.slice(i, i + 2));
+          return (trial < nearbyTrials ? nearbyPairing(group, lockedPairs, strength, random) : null) || teams.map(team => ({ team, value: random() })).sort((a, b) => a.value - b.value).flatMap(x => x.team);
+        });
         const trialTeams = Array.from({ length: shuffled.length / 2 }, (_, i) => shuffled.slice(i * 2, i * 2 + 2));
         const rotationOpponents = trialTeams.some((team, i) => i % 2 === 0 && ROTATING_PLAYERS.some(id => team.includes(id)) && ROTATING_PLAYERS.some(id => trialTeams[i + 1].includes(id)));
-        let penalty = 0, gapCost = 0, severeCost = 0;
+        let penalty = 0, gapCost = 0, severeCost = 0, mixedCost = 0;
         // Count partnering with either member as one shared daily exposure.
         // This is a preference: fixed pairs, limited attendance and team balance
         // can require another exposure, and must not make generation fail.
         for (const team of trialTeams) if (!fixedKeys.has(pairKey(...team)) && team.some(id => rotating.has(id))) {
           for (const id of team) if (!rotating.has(id)) penalty += 250 * (groupPartners[id] || 0);
         }
-        if (rotationOpponents && (opponents[rotationKey] || 0) >= opponentLimit) penalty += 250;
+        if (rotating.size && rotationOpponents && (opponents[rotationKey] || 0) >= opponentLimit) penalty += 250;
         for (let i = 0; i < shuffled.length; i += 4) {
           const teamA = trialTeams[i / 2], teamB = trialTeams[i / 2 + 1];
           const strengthA = strength(teamA[0]) + strength(teamA[1]);
           const strengthB = strength(teamB[0]) + strength(teamB[1]);
+          if (leagueMode && new Set([...teamA, ...teamB].map(id => leagues[id])).size > 1) mixedCost++;
           penalty += matchSpreadCost(shuffled.slice(i, i + 4), strength);
           gapCost += (Math.max(0, Math.abs(strengthA - strengthB) - TEAM_GAP_ALLOWANCE) / STRENGTH_STEP) ** 2;
           severeCost += Math.max(0, Math.abs(strengthA - strengthB) / STRENGTH_STEP - 4) ** 2;
@@ -95,7 +111,7 @@ export function generateSchedule(ids, quotas, { random = Math.random, attempts =
           }
         }
         penalty += 600 * gapCost;
-        if (!pairing || severeCost < pairing.severeCost - 1e-9 || (Math.abs(severeCost - pairing.severeCost) <= 1e-9 && penalty < pairing.penalty)) pairing = { shuffled, penalty, gapCost, severeCost };
+        if (!pairing || mixedCost < pairing.mixedCost || (mixedCost === pairing.mixedCost && (severeCost < pairing.severeCost - 1e-9 || (Math.abs(severeCost - pairing.severeCost) <= 1e-9 && penalty < pairing.penalty)))) pairing = { shuffled, penalty, gapCost, severeCost, mixedCost };
       }
       if (!pairing) { failed = true; break; }
       cost += pairing.penalty;
@@ -140,12 +156,14 @@ export function generateSchedule(ids, quotas, { random = Math.random, attempts =
       // them. Repetition stays feasible for small rosters and many fixed teams.
       const maxFixedOpponentMeetings = Math.max(0, ...Object.values(fixedOpponents));
       const fixedOpponentCost = Object.values(fixedOpponents).reduce((sum, count) => sum + count * (count - 1) / 2, 0);
-      const priorities = [consecutiveRests, severeGap, qualityGap, partnerRepeats, maxFixedOpponentMeetings, fixedOpponentCost, cost];
-      const previous = best && [best.consecutiveRests, best.severeGap, best.qualityGap, best.partnerRepeats, best.maxFixedOpponentMeetings, best.fixedOpponentCost, best.cost];
+      const mixedMatches = leagueMode ? Object.values(matchMap).filter(match => new Set([...match.teamA, ...match.teamB].map(id => leagues[id])).size > 1).length : 0;
+      const priorities = [consecutiveRests, mixedMatches, severeGap, qualityGap, partnerRepeats, maxFixedOpponentMeetings, fixedOpponentCost, cost];
+      const previous = best && [best.consecutiveRests, best.mixedMatches, best.severeGap, best.qualityGap, best.partnerRepeats, best.maxFixedOpponentMeetings, best.fixedOpponentCost, best.cost];
       const different = previous && priorities.findIndex((value, index) => Math.abs(value - previous[index]) > 1e-9);
-      if (!best || (different !== -1 && priorities[different] < previous[different])) best = { matchMap, cost, excessGap, severeGap, qualityGap, consecutiveRests, partnerRepeats, maxFixedOpponentMeetings, fixedOpponentCost };
+      if (!best || (different !== -1 && priorities[different] < previous[different])) best = { matchMap, cost, excessGap, severeGap, qualityGap, consecutiveRests, partnerRepeats, maxFixedOpponentMeetings, fixedOpponentCost, mixedMatches, pooled: !!poolPlan };
     }
   }
+  if (poolPlan && !best) best = generateSchedule(ids, quotas, { random, attempts, strengths, lockedPairs, preferredPairs, timingPreferences, previousSchedules, meetingDate, leagues, separatePools: false });
   if (!best && lockedPairs.length) throw new Error('고정 페어를 모두 유지하며 배정하지 못했습니다. 참석자·개인 경기 수를 조정하거나 일부 페어를 해제해 주세요.');
   if (!best) throw new Error('이 경기 수 조합으로 배정하지 못했습니다. 개인 경기 수를 고르게 조정해 주세요.');
   const gaps = Object.values(best.matchMap).map(match => Math.abs(match.teamA.reduce((sum, id) => sum + strength(id), 0) - match.teamB.reduce((sum, id) => sum + strength(id), 0)));
@@ -153,14 +171,17 @@ export function generateSchedule(ids, quotas, { random = Math.random, attempts =
   return best;
 }
 
-export function allocateForWindow(ids, rounds, lockedPairs = []) {
+export function allocateForWindow(ids, rounds, lockedPairs = [], options = {}) {
   if (ids.length < 4 || new Set(ids).size !== ids.length) throw new Error('참가자 4명 이상을 중복 없이 선택해 주세요.');
   if (!Number.isInteger(rounds) || rounds < 1) throw new Error('모임 종료 시간을 시작 시간보다 뒤로 설정해 주세요.');
   if (rounds > MAX_ROUNDS) throw new Error('모임 시간을 같은 날 안에서 설정해 주세요.');
   const slots = rounds * (ids.length >= 8 ? 8 : 4);
   if (slots < ids.length * 2) throw new Error('모두 최소 2경기씩 하기에 시간이 부족합니다. 모임 시간을 늘려 주세요.');
   const units = pairUnits(ids, lockedPairs);
-  const candidates = units.map(unit => ({ unit, order: Math.random() })).sort((a, b) => a.order - b.order).map(item => item.unit);
+  const plan = planLeaguePools(ids, rounds, lockedPairs, options);
+  if (plan) return plan.quotas;
+  const allocationRandom = options.random || Math.random;
+  const candidates = units.map(unit => ({ unit, order: allocationRandom() })).sort((a, b) => a.order - b.order).map(item => item.unit);
   const base = Math.floor(slots / ids.length);
   const chooseExtras = (index, needed) => {
     if (!needed) return [];
@@ -171,7 +192,10 @@ export function allocateForWindow(ids, rounds, lockedPairs = []) {
   const extras = chooseExtras(0, slots - base * ids.length);
   if (!extras) throw new Error('대회 준비 페어의 경기 수를 배정하지 못했습니다. 참석자 또는 페어를 확인해 주세요.');
   const additional = new Set(extras);
-  return Object.fromEntries(ids.map(id => [id, base + Number(additional.has(id))]));
+  const allocated = Object.fromEntries(ids.map(id => [id, base + Number(additional.has(id))]));
+  const capacity = ids.length >= 8 ? 8 : 4;
+  if (lockedPairs.length && !poolFeasible(units, allocated, rounds, new Map(), capacity)) return allocateUnitQuotas(ids, lockedPairs, rounds, base, allocationRandom, new Map(), capacity) || allocated;
+  return allocated;
 }
 
 function pairUnits(ids, pairs) {

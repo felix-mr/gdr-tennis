@@ -30,13 +30,8 @@ export function strengthsForSession(records, ids, baseline, date, history = [], 
   const empty = () => Object.fromEntries(ids.map(id => [id, { games: 0, residual: 0 }]));
   const observations = empty(), recent = empty(), currentQuarter = quarter(date);
   const accepted = [];
-  for (const record of records) {
-    if (!isOfficialMeeting(record) || !validDate(record.date) || record.date >= date || !withinPeriod(period, record.date) || !validResult(record)) continue;
+  for (const record of eligibleRatingRecords(records, ids, date)) {
     const { teamA, teamB } = record;
-    if (!Array.isArray(teamA) || !Array.isArray(teamB) || teamA.length !== 2 || teamB.length !== 2) continue;
-    const active = [...teamA, ...teamB];
-    try { validateGuests(record.guests || {}); } catch { continue; }
-    if (new Set(active).size !== 4 || active.some(id => id in priors ? !record.fixedPlayerIds?.includes(id) : !Object.hasOwn(record.guests || {}, id))) continue;
     accepted.push(record);
     const mean = team => team.reduce((sum, id) => sum + (priors[id] ?? GUEST_STRENGTH), 0) / 2;
     const expected = 1 / (1 + Math.exp(-4 * (mean(teamA) - mean(teamB))));
@@ -67,6 +62,20 @@ export function strengthsForSession(records, ids, baseline, date, history = [], 
     const weight = sampleWeight(games, priorGames) * confidence[id];
     return [id, adjustedAnchor * (1 - weight) + performance * weight];
   }));
+}
+
+
+// Shared acceptance rules for ratings and internal group movement.
+export function eligibleRatingRecords(records, ids, date) {
+  const known = new Set(ids), period = halfYear(date);
+  return records.filter(record => {
+    if (!isOfficialMeeting(record) || !validDate(record.date) || record.date >= date || !withinPeriod(period, record.date) || !validResult(record)) return false;
+    const { teamA, teamB } = record;
+    if (!Array.isArray(teamA) || !Array.isArray(teamB) || teamA.length !== 2 || teamB.length !== 2) return false;
+    const active = [...teamA, ...teamB];
+    try { validateGuests(record.guests || {}); } catch { return false; }
+    return new Set(active).size === 4 && active.every(id => known.has(id) ? record.fixedPlayerIds?.includes(id) : Object.hasOwn(record.guests || {}, id));
+  });
 }
 
 const sampleWeight = (games, priorGames) => games ** 2 / (games ** 2 + priorGames ** 2);
