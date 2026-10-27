@@ -11,12 +11,13 @@ const members=baseline.groups.flat(),date='2026-11-01';
 const neutral=Array.from({length:8},(_,i)=>({id:`p${i}`,name:`선수${i}`}));
 const game=(day='2026-10-11',outcome='teamA')=>({date:day,round:1,court:1,teamA:['p0','p1'],teamB:['p6','p7'],fixedPlayerIds:['p0','p1','p6','p7'],scoreA:outcome==='teamB'?3:6,scoreB:outcome==='teamA'?3:6,outcome});
 const seeded=value=>()=>{value=(Math.imul(value,1664525)+1013904223)>>>0;return value/4294967296};
+const snapshot=rows=>({id:'h2-rates',kind:'individual-aggregate',aggregationRole:'period-baseline',contributesToLiveRanking:true,datePrecision:'day',period:'2026-H2',periodStart:'2026-07-01',cutoff:'2026-10-18',rows:rows.map(([playerId,wins,losses,draws=0])=>({playerId,stats:{wins,draws,losses,scored:6*wins+3*losses+4*draws,conceded:3*wins+6*losses+4*draws}}))});
 
-test('the personal seed is the majority component and an empty ranking remains neutral',()=>{
+test('personal weights remain the majority at 65 percent and no results stay neutral',()=>{
  const result=attendanceLeaguesForSession([],players,baseline,date,{participantIds:members});
  const priors=initialStrengths(players.map(p=>p.id),baseline);
- assert.equal(PERSONAL_SEED_WEIGHT,0.75);assert.equal(HALF_YEAR_SEED_WEIGHT,0.25);
- for(const id of members)assert.equal(result.seedScores[id],0.75*priors[id]+0.25*0.5);
+ assert.equal(PERSONAL_SEED_WEIGHT,0.65);assert.equal(HALF_YEAR_SEED_WEIGHT,0.35);
+ for(const id of members)assert.equal(result.seedScores[id],0.65*priors[id]+0.35*0.5);
  assert(result.cut>=4&&members.length-result.cut>=4);
 });
 
@@ -40,20 +41,60 @@ test('missing stronger members can move a former lower member into the daily upp
  assert.deepEqual(today.leagues,reversed.leagues);
 });
 
-test('half-year ranking orders equal personal weights and sparse results have less influence',()=>{
+test('half-year win rate orders equal personal weights and sparse results have less influence',()=>{
  const one=attendanceLeaguesForSession([game()],neutral,{},date);
  const many=attendanceLeaguesForSession(Array(24).fill(game()),neutral,{},date);
  assert(one.seedScores.p0>0.5&&one.seedScores.p0-0.5<0.002);
  assert(many.seedScores.p0>one.seedScores.p0);
  assert(many.seedScores.p0>many.seedScores.p6);
  const draw=attendanceLeaguesForSession(Array(24).fill(game('2026-10-11','draw')),neutral,{},date);
- assert(Object.values(draw.seedScores).every(value=>value===0.5));
+ assert(draw.seedScores.p0<0.5);assert.equal(draw.seedScores.p0,draw.seedScores.p6);
+ assert.equal(draw.seedScores.p2,0.5);
 });
 
 test('a large personal difference remains stronger than the secondary ranking signal',()=>{
  const ratings=Object.fromEntries(neutral.map((p,i)=>[p.id,i<2?0.9:i>5?0.1:0.5]));
  const result=attendanceLeaguesForSession(Array(100).fill(game('2026-10-11','teamB')),neutral,{ratings},date);
  assert(result.seedScores.p0>result.seedScores.p6);
+});
+
+test('a better established win rate outranks more cumulative points at equal personal weights',()=>{
+ // p1 has 120 points versus p0's 54, but only a 40 percent win rate versus 60.
+ const history=[snapshot([['p0',18,12],['p1',40,60]])];
+ const result=attendanceLeaguesForSession([],neutral,{},date,{history});
+ assert(result.seedScores.p0>0.5);assert(result.seedScores.p1<0.5);
+ assert(result.seedScores.p0>result.seedScores.p1);
+ const equal=attendanceLeaguesForSession([],neutral,{},date,{history:[snapshot([['p0',12,12],['p1',50,50]])]});
+ assert.equal(equal.seedScores.p0,0.5);assert.equal(equal.seedScores.p1,0.5);
+});
+
+test('a one-game unbeaten record is weaker evidence than a well-established winning record',()=>{
+ const result=attendanceLeaguesForSession([],neutral,{},date,{history:[snapshot([['p0',1,0],['p1',36,24]])]});
+ assert(result.seedScores.p0>0.5&&result.seedScores.p0<0.501);
+ assert(result.seedScores.p1>result.seedScores.p0);
+});
+
+test('verified wins can move nearby personal weights across the daily group boundary',()=>{
+ const ratings=Object.fromEntries(neutral.map(p=>[p.id,0.5]));ratings.p0=0.58;ratings.p6=0.42;
+ const before=attendanceLeaguesForSession([],neutral,{ratings},date);
+ const after=attendanceLeaguesForSession(Array(40).fill(game('2026-10-11','teamB')),neutral,{ratings},date);
+ assert.equal(before.leagues.p0,0);assert.equal(before.leagues.p6,1);
+ assert.equal(after.leagues.p0,1);assert.equal(after.leagues.p6,0);
+});
+
+test('attendance changes confidence in wins and losses while no results remain neutral',()=>{
+ const ids=neutral.map(p=>p.id),active=['p0','p1','p6','p7'],others=ids.filter(id=>!active.includes(id));
+ const meeting=(day,members)=>({date:day,participantIds:members,fixedPlayerIds:members,matchMap:{one:{teamA:members.slice(0,2),teamB:members.slice(2,4)}}});
+ const sessions=[meeting('2026-10-04',active),...['11','18','25'].map(day=>meeting(`2026-10-${day}`,others))];
+ const allPresent=sessions.map(s=>({...s,participantIds:ids,fixedPlayerIds:ids}));
+ const periods=[{id:'2026-Q4',memberIds:ids}];
+ const records=Array(24).fill(game('2026-10-04'));
+ const low=attendanceLeaguesForSession(records,neutral,{},date,{sessions,periods});
+ const high=attendanceLeaguesForSession(records,neutral,{},date,{sessions:allPresent,periods});
+ assert(low.seedScores.p0>0.5&&low.seedScores.p0<high.seedScores.p0);
+ assert(low.seedScores.p6<0.5&&low.seedScores.p6>high.seedScores.p6);
+ const none=attendanceLeaguesForSession([],neutral,{},date,{sessions:allPresent,periods});
+ assert(Object.values(none.seedScores).every(n=>n===0.5));
 });
 
 test('only verified pre-meeting H2 evidence can influence the seed',()=>{

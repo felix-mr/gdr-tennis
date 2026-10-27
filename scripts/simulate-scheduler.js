@@ -25,7 +25,7 @@ const allIds = players.map(player => player.id), ids14 = allIds.slice(0, 14);
 const names = Object.fromEntries(players.map(player => [player.id, player.name]));
 const initial = initialStrengths(allIds, baseline);
 const current = strengthsForSession(input.records, allIds, baseline, baseDate, input.history, { sessions: Object.values(input.state?.sessions || {}), periods });
-const versions = [{ name: 'new', generate: generateSchedule, allocate: allocateForWindow, leagueMode: true, daily: true }];
+const versions = [{ name: 'new', generate: generateSchedule, allocate: allocateForWindow, leagueMode: true, daily: true, group: attendanceLeaguesForSession }];
 if (option('--compare-ref')) {
   let source = execFileSync('git', ['show', `${option('--compare-ref')}:src/scheduler.js`], { encoding: 'utf8' }).replace("'./model.js'", JSON.stringify(pathToFileURL(process.cwd() + '/src/model.js').href));
   if (source.includes("'./pairing-policy.js'")) {
@@ -36,7 +36,12 @@ if (option('--compare-ref')) {
   for (const file of ['mixing-policy.js', 'bounded-mixing-plan.js']) source = source.replace("'./" + file + "'", JSON.stringify(pathToFileURL(process.cwd() + '/src/' + file).href));
   const previous = await import('data:text/javascript;base64,' + Buffer.from(source).toString('base64'));
   const daily = execFileSync('git', ['show', `${option('--compare-ref')}:src/app.js`], { encoding: 'utf8' }).includes('attendanceLeaguesForSession');
-  versions.unshift({ name: option('--compare-ref'), generate: previous.generateSchedule, allocate: previous.allocateForWindow, leagueMode: source.includes('leagues = {}'), daily });
+  let group;
+  if (daily) {
+    const groupingSource = execFileSync('git', ['show', `${option('--compare-ref')}:src/attendance-leagues.js`], { encoding: 'utf8' }).replace(/'\.\/([^']+)'/g, (_, file) => JSON.stringify(pathToFileURL(process.cwd() + '/src/' + file).href));
+    group = (await import('data:text/javascript;base64,' + Buffer.from(groupingSource).toString('base64'))).attendanceLeaguesForSession;
+  }
+  versions.unshift({ name: option('--compare-ref'), generate: previous.generateSchedule, allocate: previous.allocateForWindow, leagueMode: source.includes('leagues = {}'), daily, group });
 }
 function seeded(seed) { return () => { seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0; return seed / 4294967296; }; }
 const ids10 = ['gdr001', 'gdr002', 'gdr003', 'gdr004', 'gdr006', 'gdr007', 'gdr009', 'gdr010', 'gdr011', 'gdr012'];
@@ -66,7 +71,7 @@ for (const scenario of cases) for (const version of versions) {
     const guestProfiles = Object.fromEntries(ids.filter(id => id.startsWith('guest')).map(id => [id, { name: id }]));
     let strengths = { ...current, guest001: GUEST_STRENGTH, guest002: GUEST_STRENGTH };
     if (version.daily) {
-      const grouping = attendanceLeaguesForSession(input.records, players, baseline, date, { participantIds: ids, history: input.history, sessions: Object.values(input.state.sessions), periods, guests: guestProfiles });
+      const grouping = version.group(input.records, players, baseline, date, { participantIds: ids, history: input.history, sessions: Object.values(input.state.sessions), periods, guests: guestProfiles });
       leagues = grouping.leagues; strengths = grouping.seedScores;
     }
     if (scenario.drift) ids14.forEach((id, index) => { strengths[id] = Math.max(0, Math.min(1, strengths[id] + 0.25 * (week / 9) * (index % 2 ? 1 : -1))); });
