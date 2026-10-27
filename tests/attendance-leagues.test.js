@@ -11,7 +11,7 @@ const members=baseline.groups.flat(),date='2026-11-01';
 const neutral=Array.from({length:8},(_,i)=>({id:`p${i}`,name:`선수${i}`}));
 const game=(day='2026-10-11',outcome='teamA')=>({date:day,round:1,court:1,teamA:['p0','p1'],teamB:['p6','p7'],fixedPlayerIds:['p0','p1','p6','p7'],scoreA:outcome==='teamB'?3:6,scoreB:outcome==='teamA'?3:6,outcome});
 const seeded=value=>()=>{value=(Math.imul(value,1664525)+1013904223)>>>0;return value/4294967296};
-const snapshot=rows=>({id:'h2-rates',kind:'individual-aggregate',aggregationRole:'period-baseline',contributesToLiveRanking:true,datePrecision:'day',period:'2026-H2',periodStart:'2026-07-01',cutoff:'2026-10-18',rows:rows.map(([playerId,wins,losses,draws=0])=>({playerId,stats:{wins,draws,losses,scored:6*wins+3*losses+4*draws,conceded:3*wins+6*losses+4*draws}}))});
+const snapshot=rows=>({id:'h2-rates',kind:'individual-aggregate',aggregationRole:'period-baseline',contributesToLiveRanking:true,datePrecision:'day',period:'2026-Q4',periodStart:'2026-10-01',cutoff:'2026-10-18',rows:rows.map(([playerId,wins,losses,draws=0])=>({playerId,stats:{wins,draws,losses,scored:6*wins+3*losses+4*draws,conceded:3*wins+6*losses+4*draws}}))});
 
 test('personal weights and confidence-adjusted performance contribute equally with no results staying neutral',()=>{
  const result=attendanceLeaguesForSession([],players,baseline,date,{participantIds:members});
@@ -99,17 +99,68 @@ test('attendance changes confidence in wins and losses while no results remain n
  assert(Object.values(none.seedScores).every(n=>n===0.5));
 });
 
+test('Q3 wins still affect H2 performance when the current-quarter sample is identical',()=>{
+ const current=[...Array(6).fill(game()),...Array(6).fill(game('2026-10-11','teamB'))];
+ const better=attendanceLeaguesForSession([...Array(24).fill(game('2026-09-27')), ...current],neutral,{},date);
+ const worse=attendanceLeaguesForSession([...Array(24).fill(game('2026-09-27','teamB')), ...current],neutral,{},date);
+ assert(better.seedScores.p0>0.5);assert(worse.seedScores.p0<0.5);
+ assert(Math.abs(better.seedScores.p0+worse.seedScores.p0-1)<1e-12);
+});
+
+test('previous-quarter game volume cannot increase trust in an unchanged H2 win rate',()=>{
+ const current=Array(4).fill(game());
+ const few=attendanceLeaguesForSession([...Array(4).fill(game('2026-09-27')),...current],neutral,{},date);
+ const many=attendanceLeaguesForSession([...Array(200).fill(game('2026-09-27')),...current],neutral,{},date);
+ assert.deepEqual(few.seedScores,many.seedScores);
+});
+
+test('previous-quarter missed meetings cannot lower current-quarter attendance confidence',()=>{
+ const ids=neutral.map(p=>p.id),others=['p2','p3','p4','p5'];
+ const meeting=(day,members)=>({date:day,participantIds:members,fixedPlayerIds:members,matchMap:{one:{teamA:members.slice(0,2),teamB:members.slice(2,4)}}});
+ const current=[meeting('2026-10-11',ids)];
+ const previous=[meeting('2026-09-06',ids),meeting('2026-09-13',others),meeting('2026-09-20',others)];
+ const periods=[{id:'2026-Q3',memberIds:ids},{id:'2026-Q4',memberIds:ids}];
+ const records=Array(12).fill(game());
+ const normal=attendanceLeaguesForSession(records,neutral,{},date,{sessions:current,periods});
+ const oldAbsences=attendanceLeaguesForSession(records,neutral,{},date,{sessions:[...previous,...current],periods});
+ assert.deepEqual(normal.seedScores,oldAbsences.seedScores);
+});
+
+test('a cross-quarter H2 total supplies win rates but cannot fabricate current-quarter games',()=>{
+ const base=attendanceLeaguesForSession([],neutral,{},date);
+ const old={...snapshot([['p0',100,0],['p1',0,100]]),period:'2026-H2',periodStart:'2026-07-01'};
+ const unknownQuarter=attendanceLeaguesForSession([],neutral,{},date,{history:[old]});
+ assert.deepEqual(unknownQuarter.seedScores,base.seedScores);
+ const withKnownQuarter=attendanceLeaguesForSession([game()],neutral,{},date,{history:[old]});
+ assert(withKnownQuarter.seedScores.p0>0.5);
+ assert(withKnownQuarter.seedScores.p0-0.5<0.001);
+ const dated={id:'daily',kind:'daily-individual-aggregate',datePrecision:'day',cutoff:'2026-10-11',rows:snapshot([['p0',24,0]]).rows};
+ const daily=attendanceLeaguesForSession([],neutral,{},date,{history:[old,dated]});
+ assert(daily.seedScores.p0>withKnownQuarter.seedScores.p0);
+});
+
+test('confidence resets at the scheduled quarter boundary, including when old form changed',()=>{
+ for(const [target,days] of [['2026-10-01',['2026-09-06','2026-09-13','2026-09-20']],['2026-04-01',['2026-03-08','2026-03-15','2026-03-22']],['2027-01-01',['2026-12-06','2026-12-13','2026-12-20']]]){
+  const records=days.flatMap(day=>Array(4).fill(game(day)));
+  const before=attendanceLeaguesForSession([],neutral,{},target);
+  const after=attendanceLeaguesForSession(records,neutral,{},target);
+  assert.deepEqual(after.seedScores,before.seedScores);
+ }
+ const first=attendanceLeaguesForSession([game('2026-10-01')],neutral,{},'2026-10-02');
+ assert(first.seedScores.p0>0.5);
+});
+
 test('only verified pre-meeting H2 evidence can influence the seed',()=>{
  const empty=attendanceLeaguesForSession([],neutral,{},date);
  const bad=[game('2026-06-28'),game(date),game('2026-11-08'),{...game(),scoreA:-1},{...game(),fixedPlayerIds:['p0','p1','p6']}];
  assert.deepEqual(attendanceLeaguesForSession(bad,neutral,{},date),empty);
  const snapshot={id:'h2',kind:'individual-aggregate',aggregationRole:'period-baseline',contributesToLiveRanking:true,datePrecision:'day',period:'2026-H2',periodStart:'2026-07-01',cutoff:'2026-10-18',rows:[{playerId:'p0',stats:{wins:100,draws:0,losses:0,scored:600,conceded:200}},{playerId:'p1',stats:{wins:50,draws:0,losses:50,scored:500,conceded:400}}]};
- const good=attendanceLeaguesForSession([],neutral,{},date,{history:[snapshot]});assert(good.seedScores.p0>good.seedScores.p1);
+ const good=attendanceLeaguesForSession([game()],neutral,{},date,{history:[snapshot]});assert(good.seedScores.p0>good.seedScores.p1);
  for(const history of [[{...snapshot,cutoff:date}],[{...snapshot,cutoff:'2026-06-28',periodStart:'2026-01-01'}],[{...snapshot,contributesToRatings:false}],[{...snapshot,rows:snapshot.rows.map(row=>({...row,issues:['identity-review']}))}]])assert.deepEqual(attendanceLeaguesForSession([],neutral,{},date,{history}),empty);
 });
 
 test('covered actual matches do not count twice in the half-year rank',()=>{
- const snapshot={id:'h2',kind:'individual-aggregate',aggregationRole:'period-baseline',contributesToLiveRanking:true,datePrecision:'day',period:'2026-H2',periodStart:'2026-07-01',cutoff:'2026-10-18',rows:['p0','p1','p6','p7'].map(id=>({playerId:id,stats:{wins:['p0','p1'].includes(id)?24:0,draws:0,losses:['p0','p1'].includes(id)?0:24,scored:100,conceded:80}}))};
+ const snapshot={id:'h2',kind:'individual-aggregate',aggregationRole:'period-baseline',contributesToLiveRanking:true,datePrecision:'day',period:'2026-Q4',periodStart:'2026-10-01',cutoff:'2026-10-18',rows:['p0','p1','p6','p7'].map(id=>({playerId:id,stats:{wins:['p0','p1'].includes(id)?24:0,draws:0,losses:['p0','p1'].includes(id)?0:24,scored:100,conceded:80}}))};
  const before=attendanceLeaguesForSession([],neutral,{},date,{history:[snapshot]});
  const after=attendanceLeaguesForSession(Array(12).fill(game()),neutral,{},date,{history:[snapshot]});
  assert.deepEqual(before.seedScores,after.seedScores);
